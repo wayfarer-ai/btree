@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:temporal.io)",
+      "WebSearch",
+      "WebFetch(domain:docs.temporal.io)"
+    ]
+  }
+}
