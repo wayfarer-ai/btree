@@ -3,9 +3,8 @@
  * Returns RUNNING to signal pause (not FAILURE)
  */
 
-import * as Effect from "effect/Effect";
 import { ActionNode } from "../base-node.js";
-import { type EffectTickContext, NodeStatus } from "../types.js";
+import { type TemporalContext, NodeStatus } from "../types.js";
 
 export interface BreakpointConfig {
   id: string;
@@ -24,10 +23,8 @@ export class Breakpoint extends ActionNode {
     this.breakpointId = config.id;
   }
 
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
     this._status = NodeStatus.RUNNING;
-    return Effect.succeed(NodeStatus.RUNNING);
+    return NodeStatus.RUNNING;
   }
 }

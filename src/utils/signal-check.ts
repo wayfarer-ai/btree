@@ -12,8 +12,6 @@
  * @module signal-check
  */
 
-import * as Effect from "effect/Effect";
-
 /**
  * Error thrown when an operation is cancelled via AbortSignal
  */
@@ -41,43 +39,35 @@ export class OperationCancelledError extends Error {
  *
  * @param signal - Optional AbortSignal from TickContext
  * @param message - Optional custom error message (defaults to "Operation was cancelled")
- * @returns Effect that fails with OperationCancelledError if signal is aborted, succeeds otherwise
+ * @throws OperationCancelledError if signal is aborted
  *
  * @example
  * ```typescript
  * // In a composite node
- * protected executeTick(context: EffectTickContext) {
- *   return Effect.gen(function* (_) {
- *     yield* _(checkSignal(context.signal)); // Check before each child
- *     for (const child of self._children) {
- *       const status = yield* _(child.tick(context));
- *       // ...
- *     }
- *   });
+ * async executeTick(context: TemporalContext): Promise<NodeStatus> {
+ *   checkSignal(context.signal); // Throws if cancelled
+ *   for (const child of this._children) {
+ *     const status = await child.tick(context);
+ *     // ...
+ *   }
  * }
  * ```
  *
  * @example
  * ```typescript
  * // In a decorator with loops
- * protected executeTick(context: EffectTickContext) {
- *   return Effect.gen(function* (_) {
- *     for (let i = 0; i < maxAttempts; i++) {
- *       yield* _(checkSignal(context.signal, 'Retry operation'));
- *       // ...
- *     }
- *   });
+ * async executeTick(context: TemporalContext): Promise<NodeStatus> {
+ *   for (let i = 0; i < maxAttempts; i++) {
+ *     checkSignal(context.signal, 'Retry operation');
+ *     // ...
+ *   }
  * }
  * ```
  */
-export function checkSignal(
-  signal?: AbortSignal,
-  message?: string,
-): Effect.Effect<void, OperationCancelledError, never> {
+export function checkSignal(signal?: AbortSignal, message?: string): void {
   if (signal?.aborted) {
-    return Effect.fail(new OperationCancelledError(message));
+    throw new OperationCancelledError(message);
   }
-  return Effect.succeed(undefined);
 }
 
 /**

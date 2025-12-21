@@ -2,27 +2,25 @@
  * Tests for Breakpoint node
  */
 
-import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vitest";
 import { ScopedBlackboard } from "../blackboard.js";
 import { Registry } from "../registry.js";
-import { NodeStatus, type EffectTickContext } from "../types.js";
+import { NodeStatus, type TemporalContext } from "../types.js";
 import { Breakpoint } from "./breakpoint.js";
 
 describe("Breakpoint", () => {
-  const createContext = (): EffectTickContext => ({
+  const createContext = (): TemporalContext => ({
     blackboard: new ScopedBlackboard(),
     treeRegistry: new Registry(),
     signal: new AbortController().signal,
     timestamp: Date.now(),
-    runningOps: new Map(),
   });
 
   it("should return RUNNING to signal pause", async () => {
     const node = new Breakpoint({ id: "test-break" });
     const context = createContext();
 
-    const result = await Effect.runPromise(node.tick(context));
+    const result = await node.tick(context);
 
     expect(result).toBe(NodeStatus.RUNNING);
     expect(node.status()).toBe(NodeStatus.RUNNING);
@@ -40,8 +38,8 @@ describe("Breakpoint", () => {
     const context = createContext();
 
     // Execute multiple times - should always return RUNNING
-    const result1 = await Effect.runPromise(node.tick(context));
-    const result2 = await Effect.runPromise(node.tick(context));
+    const result1 = await node.tick(context);
+    const result2 = await node.tick(context);
 
     expect(result1).toBe(NodeStatus.RUNNING);
     expect(result2).toBe(NodeStatus.RUNNING);

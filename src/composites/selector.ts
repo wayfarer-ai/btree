@@ -3,82 +3,66 @@
  * Executes children in order until one succeeds or all fail
  */
 
-import * as Effect from "effect/Effect";
 import { CompositeNode } from "../base-node.js";
-import { type EffectTickContext, NodeStatus } from "../types.js";
+import {
+  type TemporalContext,
+  type NodeConfiguration,
+  NodeStatus,
+} from "../types.js";
 import { checkSignal } from "../utils/signal-check.js";
 
 export class Selector extends CompositeNode {
   private currentChildIndex: number = 0;
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    this.log("Ticking with", this._children.length, "children");
 
-    return Effect.gen(function* (_) {
-      self.log("Ticking with", self._children.length, "children");
-
-      if (self._children.length === 0) {
-        return NodeStatus.FAILURE;
-      }
-
-      // Continue from where we left off if RUNNING
-      while (self.currentChildIndex < self._children.length) {
-        // Check for cancellation before ticking each child
-        yield* _(checkSignal(context.signal));
-
-        const child = self._children[self.currentChildIndex];
-        if (!child) {
-          return yield* _(
-            Effect.fail(
-              new Error(
-                `Child at index ${self.currentChildIndex} is undefined`,
-              ),
-            ),
-          );
-        }
-
-        self.log(`Ticking child ${self.currentChildIndex}: ${child.name}`);
-        const childStatus = yield* _(child.tick(context));
-
-        switch (childStatus) {
-          case NodeStatus.SUCCESS:
-            self.log(`Child ${child.name} succeeded - selector succeeds`);
-            self._status = NodeStatus.SUCCESS;
-            self.currentChildIndex = 0;
-            return NodeStatus.SUCCESS;
-
-          case NodeStatus.FAILURE:
-            self.log(`Child ${child.name} failed`);
-            self.currentChildIndex++;
-            break;
-
-          case NodeStatus.SKIPPED:
-            self.log(`Child ${child.name} skipped (before resume point)`);
-            self.currentChildIndex++;
-            break;
-
-          case NodeStatus.RUNNING:
-            self.log(`Child ${child.name} is running`);
-            self._status = NodeStatus.RUNNING;
-            return NodeStatus.RUNNING;
-
-          default:
-            return yield* _(
-              Effect.fail(
-                new Error(`Unexpected status from child: ${childStatus}`),
-              ),
-            );
-        }
-      }
-
-      // All children failed
-      self.log("All children failed");
-      self._status = NodeStatus.FAILURE;
-      self.currentChildIndex = 0;
+    if (this._children.length === 0) {
       return NodeStatus.FAILURE;
-    });
+    }
+
+    // Continue from where we left off if RUNNING
+    while (this.currentChildIndex < this._children.length) {
+      // Check for cancellation before ticking each child
+      checkSignal(context.signal);
+
+      const child = this._children[this.currentChildIndex];
+      if (!child) {
+        throw new Error(
+          `Child at index ${this.currentChildIndex} is undefined`,
+        );
+      }
+
+      this.log(`Ticking child ${this.currentChildIndex}: ${child.name}`);
+      const childStatus = await child.tick(context);
+
+      switch (childStatus) {
+        case NodeStatus.SUCCESS:
+          this.log(`Child ${child.name} succeeded - selector succeeds`);
+          this._status = NodeStatus.SUCCESS;
+          this.currentChildIndex = 0;
+          return NodeStatus.SUCCESS;
+
+        case NodeStatus.FAILURE:
+          this.log(`Child ${child.name} failed`);
+          this.currentChildIndex++;
+          break;
+
+        case NodeStatus.RUNNING:
+          this.log(`Child ${child.name} is running`);
+          this._status = NodeStatus.RUNNING;
+          return NodeStatus.RUNNING;
+
+        default:
+          throw new Error(`Unexpected status from child: ${childStatus}`);
+      }
+    }
+
+    // All children failed
+    this.log("All children failed");
+    this._status = NodeStatus.FAILURE;
+    this.currentChildIndex = 0;
+    return NodeStatus.FAILURE;
   }
 
   protected onHalt(): void {
@@ -88,5 +72,14 @@ export class Selector extends CompositeNode {
 
   protected onReset(): void {
     this.currentChildIndex = 0;
+  }
+}
+
+/**
+ * Fallback is an alias for Selector (BehaviorTree.CPP compatibility)
+ */
+export class Fallback extends Selector {
+  constructor(config: NodeConfiguration) {
+    super({ ...config, type: "Fallback" });
   }
 }

@@ -3,11 +3,10 @@
  * Provides function-like reusability for step groups with scoped blackboard isolation
  */
 
-import * as Effect from "effect/Effect";
 import { ActionNode } from "../base-node.js";
 import type { TreeNode } from "../types.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "../types.js";
@@ -37,62 +36,46 @@ export class SubTree extends ActionNode {
     this.treeId = config.treeId;
   }
 
-  protected executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  protected async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    // Check for cancellation before starting step group
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      // Check for cancellation before starting step group
-      yield* _(checkSignal(context.signal));
-
-      // 1. Clone tree from registry (lazy, only on first tick)
-      if (!self.clonedTree) {
-        if (!context.treeRegistry.hasTree(self.treeId)) {
-          return yield* _(
-            Effect.fail(
-              new Error(
-                `SubTree tree '${self.treeId}' not found in registry. ` +
-                  `Available trees: ${context.treeRegistry.getAllTreeIds().join(", ") || "none"}`,
-              ),
-            ),
-          );
-        }
-        // cloneTree returns BehaviorTree, get the root TreeNode for execution
-        const clonedBehaviorTree = context.treeRegistry.cloneTree(self.treeId);
-        self.clonedTree = clonedBehaviorTree.getRoot();
-        self.log(`Cloned SubTree tree '${self.treeId}' from registry`);
-      }
-
-      // 2. Create scoped blackboard for this SubTree
-      const subtreeScope = context.blackboard.createScope(
-        `subtree_${self.id}`,
-      );
-      self.log(
-        `Created scoped blackboard: ${subtreeScope.getFullScopePath()}`,
-      );
-
-      // 3. Execute cloned tree with scoped context
-      const scopedContext: EffectTickContext = {
-        ...context,
-        blackboard: subtreeScope,
-      };
-
-      try {
-        self.log(`Executing SubTree tree '${self.treeId}'`);
-        const status = yield* _(self.clonedTree.tick(scopedContext));
-
-        self.log(
-          `SubTree tree '${self.treeId}' completed with status: ${status}`,
+    // 1. Clone tree from registry (lazy, only on first tick)
+    if (!this.clonedTree) {
+      if (!context.treeRegistry.hasTree(this.treeId)) {
+        throw new Error(
+          `SubTree tree '${this.treeId}' not found in registry. ` +
+            `Available trees: ${context.treeRegistry.getAllTreeIds().join(", ") || "none"}`,
         );
-        return status;
-      } catch (error) {
-        self.log(
-          `SubTree tree '${self.treeId}' failed with error: ${error}`,
-        );
-        return yield* _(Effect.fail(error as Error));
       }
-    });
+      // cloneTree returns BehaviorTree, get the root TreeNode for execution
+      const clonedBehaviorTree = context.treeRegistry.cloneTree(this.treeId);
+      this.clonedTree = clonedBehaviorTree.getRoot();
+      this.log(`Cloned SubTree tree '${this.treeId}' from registry`);
+    }
+
+    // 2. Create scoped blackboard for this SubTree
+    const subtreeScope = context.blackboard.createScope(`subtree_${this.id}`);
+    this.log(`Created scoped blackboard: ${subtreeScope.getFullScopePath()}`);
+
+    // 3. Execute cloned tree with scoped context
+    const scopedContext: TemporalContext = {
+      ...context,
+      blackboard: subtreeScope,
+    };
+
+    try {
+      this.log(`Executing SubTree tree '${this.treeId}'`);
+      const status = await this.clonedTree.tick(scopedContext);
+
+      this.log(
+        `SubTree tree '${this.treeId}' completed with status: ${status}`,
+      );
+      return status;
+    } catch (error) {
+      this.log(`SubTree tree '${this.treeId}' failed with error: ${error}`);
+      throw error;
+    }
   }
 
   /**

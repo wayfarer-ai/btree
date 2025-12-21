@@ -4,11 +4,10 @@
  */
 
 import antlr4 from "antlr4";
-import * as Effect from "effect/Effect";
 import { ActionNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "../types.js";
@@ -56,25 +55,19 @@ export class Script extends ActionNode {
     }
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    try {
+      const evaluator = new ScriptEvaluator(context);
+      evaluator.visit(this.parseTree);
 
-    return Effect.gen(function* (_) {
-      try {
-        const evaluator = new ScriptEvaluator(context);
-        evaluator.visit(self.parseTree);
-
-        self.log("Script executed successfully");
-        return yield* _(Effect.succeed(NodeStatus.SUCCESS));
-      } catch (error: unknown) {
-        self.log(
-          `Script execution error: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        return yield* _(Effect.succeed(NodeStatus.FAILURE));
-      }
-    });
+      this.log("Script executed successfully");
+      return NodeStatus.SUCCESS;
+    } catch (error: unknown) {
+      this.log(
+        `Script execution error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return NodeStatus.FAILURE;
+    }
   }
 
   /**

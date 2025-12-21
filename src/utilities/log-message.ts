@@ -16,11 +16,10 @@
  * - Log with level: <LogMessage message="Error occurred" level="error" />
  */
 
-import * as Effect from "effect/Effect";
 import { ActionNode } from "../base-node.js";
 import { NodeEventType } from "../events.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "../types.js";
@@ -46,59 +45,55 @@ export class LogMessage extends ActionNode {
     this.level = config.level || "info";
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      try {
-        // Resolve blackboard values in message (supports ${key} syntax)
-        const resolvedMessage = this.resolveMessage(this.message, context);
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    try {
+      // Resolve blackboard values in message (supports ${key} syntax)
+      const resolvedMessage = this.resolveMessage(this.message, context);
 
-        // Log based on level
-        switch (this.level) {
-          case "warn":
-            console.warn(`[LogMessage:${this.name}] ${resolvedMessage}`);
-            break;
-          case "error":
-            console.error(`[LogMessage:${this.name}] ${resolvedMessage}`);
-            break;
-          case "debug":
-            console.debug(`[LogMessage:${this.name}] ${resolvedMessage}`);
-            break;
-          default:
-            console.log(`[LogMessage:${this.name}] ${resolvedMessage}`);
-            break;
-        }
-
-        // Emit LOG event for collection by TickEngine
-        context.eventEmitter?.emit({
-          type: NodeEventType.LOG,
-          nodeId: this.id,
-          nodeName: this.name,
-          nodeType: this.type,
-          timestamp: Date.now(),
-          data: { level: this.level, message: resolvedMessage },
-        });
-
-        this._status = NodeStatus.SUCCESS;
-        return NodeStatus.SUCCESS;
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        console.error(
-          `[LogMessage:${this.name}] Failed to log message: ${errorMessage}`,
-        );
-        this._status = NodeStatus.FAILURE;
-        return NodeStatus.FAILURE;
+      // Log based on level
+      switch (this.level) {
+        case "warn":
+          console.warn(`[LogMessage:${this.name}] ${resolvedMessage}`);
+          break;
+        case "error":
+          console.error(`[LogMessage:${this.name}] ${resolvedMessage}`);
+          break;
+        case "debug":
+          console.debug(`[LogMessage:${this.name}] ${resolvedMessage}`);
+          break;
+        default:
+          console.log(`[LogMessage:${this.name}] ${resolvedMessage}`);
+          break;
       }
-    });
+
+      // Emit LOG event for collection
+      context.eventEmitter?.emit({
+        type: NodeEventType.LOG,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { level: this.level, message: resolvedMessage },
+      });
+
+      this._status = NodeStatus.SUCCESS;
+      return NodeStatus.SUCCESS;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error(
+        `[LogMessage:${this.name}] Failed to log message: ${errorMessage}`,
+      );
+      this._status = NodeStatus.FAILURE;
+      return NodeStatus.FAILURE;
+    }
   }
 
   /**
    * Resolve blackboard values in message string
    * Supports ${key} syntax for blackboard references
    */
-  private resolveMessage(message: string, context: EffectTickContext): string {
+  private resolveMessage(message: string, context: TemporalContext): string {
     // Match ${key} patterns
     const placeholderRegex = /\$\{([^}]+)\}/g;
 

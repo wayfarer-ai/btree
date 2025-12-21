@@ -1,23 +1,20 @@
-import { beforeEach, describe, expect, it, vi } from "@effect/vitest";
-import * as Effect from "effect/Effect";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ActionNode } from "./base-node.js";
 import { BehaviorTree } from "./behavior-tree.js";
 import { Sequence } from "./composites/sequence.js";
 import { Invert } from "./decorators/invert.js";
 import { Registry } from "./registry.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "./types.js";
 
 // Mock node for testing
 class TestActionNode extends ActionNode {
-  tick(_context: EffectTickContext) {
-    return Effect.sync(() => {
-      this._status = NodeStatus.SUCCESS;
-      return NodeStatus.SUCCESS;
-    });
+  async tick(_context: TemporalContext) {
+    this._status = NodeStatus.SUCCESS;
+    return NodeStatus.SUCCESS;
   }
 }
 

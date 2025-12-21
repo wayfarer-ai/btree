@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:temporal.io)",
+      "WebSearch",
+      "WebFetch(domain:docs.temporal.io)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npm install:*)",
+      "Bash(node -e:*)",
+      "Bash(npm test:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(npm run test:*)",
+      "Bash(timeout 30 npm run test:*)",
+      "Bash(timeout 10 npx tsx:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsx client.ts)"
+    ]
+  }
+}

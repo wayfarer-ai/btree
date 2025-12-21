@@ -3,8 +3,7 @@
  * Enables external systems (debuggers, monitors, agents) to track execution in real-time
  */
 
-import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
+// Effect-TS removed in Phase 1 - toStream() method commented out
 
 /**
  * Types of events emitted by nodes during execution
@@ -153,28 +152,30 @@ export class NodeEventEmitter {
 
   /**
    * Returns an Effect Stream of all events
-   * Uses Effect's built-in backpressure handling - no manual queue needed
+   * REMOVED: Effect-TS integration removed in Phase 1
+   * For streaming events in Temporal workflows, use native event emitter pattern
    */
-  toStream(): Stream.Stream<NodeEvent<unknown>> {
-    return Stream.asyncPush<NodeEvent<unknown>>((emit) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          const callback = (event: NodeEvent<unknown>) => {
-            emit.single(event);
-          };
-          this.onAll(callback);
-          return callback;
-        }),
-        (callback) => Effect.sync(() => this.offAll(callback)),
-      ),
-    );
-  }
+  // toStream(): Stream.Stream<NodeEvent<unknown>> {
+  //   return Stream.asyncPush<NodeEvent<unknown>>((emit) =>
+  //     Effect.acquireRelease(
+  //       Effect.sync(() => {
+  //         const callback = (event: NodeEvent<unknown>) => {
+  //           emit.single(event);
+  //         };
+  //         this.onAll(callback);
+  //         return callback;
+  //       }),
+  //       (callback) => Effect.sync(() => this.offAll(callback)),
+  //     ),
+  //   );
+  // }
 
   /**
    * Returns an AsyncIterable of all events
-   * Convenience method for non-Effect consumers (like tRPC)
+   * REMOVED: Effect-TS dependency removed in Phase 1
+   * Implement using native async generators if needed
    */
-  toAsyncIterable(): AsyncIterable<NodeEvent<unknown>> {
-    return Stream.toAsyncIterable(this.toStream());
-  }
+  // toAsyncIterable(): AsyncIterable<NodeEvent<unknown>> {
+  //   return Stream.toAsyncIterable(this.toStream());
+  // }
 }

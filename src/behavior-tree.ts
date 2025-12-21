@@ -3,7 +3,13 @@
  * Enables partial tree updates without full reload
  */
 
-import type { TreeNode } from "./types.js";
+import type {
+  TreeNode,
+  TemporalContext,
+  WorkflowArgs,
+  WorkflowResult,
+} from "./types.js";
+import { ScopedBlackboard } from "./blackboard.js";
 
 /**
  * BehaviorTree class that wraps a TreeNode root with path-based indexing
@@ -142,6 +148,61 @@ export class BehaviorTree {
   clone(): BehaviorTree {
     const clonedRoot = this.root.clone();
     return new BehaviorTree(clonedRoot);
+  }
+
+  /**
+   * Convert this BehaviorTree to a Temporal workflow function
+   * Returns a workflow function that can be registered with Temporal
+   *
+   * @returns A Temporal workflow function that executes this behavior tree
+   *
+   * @example
+   * ```typescript
+   * import { BehaviorTree } from '@wayfarer-ai/btree';
+   * import { Sequence } from '@wayfarer-ai/btree';
+   * import { PrintAction } from '@wayfarer-ai/btree';
+   *
+   * const root = new Sequence({ id: 'root' });
+   * root.addChild(new PrintAction({ id: 'step1', message: 'Hello' }));
+   * root.addChild(new PrintAction({ id: 'step2', message: 'World' }));
+   *
+   * const tree = new BehaviorTree(root);
+   * const workflow = tree.toWorkflow();
+   *
+   * // Register with Temporal worker
+   * // Worker.create({ workflows: { myWorkflow: workflow }, ... })
+   * ```
+   */
+  toWorkflow(): (args: WorkflowArgs) => Promise<WorkflowResult> {
+    const root = this.root;
+
+    return async function behaviorTreeWorkflow(
+      args: WorkflowArgs,
+    ): Promise<WorkflowResult> {
+      // Create TemporalContext
+      const context: TemporalContext = {
+        blackboard: new ScopedBlackboard(),
+        treeRegistry: args.treeRegistry,
+        timestamp: Date.now(),
+        sessionId: args.sessionId || `session-${Date.now()}`,
+      };
+
+      // Initialize blackboard with input
+      if (args.input) {
+        for (const [key, value] of Object.entries(args.input)) {
+          context.blackboard.set(key, value);
+        }
+      }
+
+      // Execute tree
+      const status = await root.tick(context);
+
+      // Return result with output
+      return {
+        status,
+        output: context.blackboard.toJSON(),
+      };
+    };
   }
 
   /**

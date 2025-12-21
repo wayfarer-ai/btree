@@ -2,18 +2,15 @@
  * Tests for BehaviorTree with path-based indexing
  */
 
-import { describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
+import { describe, expect, it } from "vitest";
 import { BehaviorTree } from "./behavior-tree.js";
 import { ScopedBlackboard } from "./blackboard.js";
 import { Selector } from "./composites/selector.js";
 import { Sequence } from "./composites/sequence.js";
-import { Step } from "./composites/step.js";
 import { ActionNode, type NodeConfiguration } from "./index.js";
 import { Registry } from "./registry.js";
 import { FailureNode, SuccessNode } from "./test-nodes.js";
-import { TickEngine } from "./tick-engine.js";
-import { type EffectTickContext, NodeStatus } from "./types.js";
+import { type TemporalContext, NodeStatus } from "./types.js";
 
 // Simple print action for testing
 class PrintAction extends ActionNode {
@@ -24,14 +21,10 @@ class PrintAction extends ActionNode {
     this.message = config.message;
   }
 
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      this.log(`Message: ${this.message}`);
-      this._status = NodeStatus.SUCCESS;
-      return NodeStatus.SUCCESS;
-    });
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+    this.log(`Message: ${this.message}`);
+    this._status = NodeStatus.SUCCESS;
+    return NodeStatus.SUCCESS;
   }
 }
 
@@ -57,7 +50,7 @@ describe("BehaviorTree", () => {
 
     it("should index nested tree structure", () => {
       const root = new Sequence({ id: "root" });
-      const step = new Step({ id: "step", name: "step" });
+      const step = new Sequence({ id: "step", name: "step" });
       const innerSeq = new Sequence({ id: "inner" });
       const action = new PrintAction({ id: "action", message: "Deep" });
 
@@ -143,7 +136,7 @@ describe("BehaviorTree", () => {
   describe("getNodePath", () => {
     it("should return correct path for a node", () => {
       const root = new Sequence({ id: "root" });
-      const step = new Step({ id: "step", name: "step" });
+      const step = new Sequence({ id: "step", name: "step" });
       const action = new PrintAction({ id: "action", message: "Test" });
 
       step.addChild(action);
@@ -168,7 +161,7 @@ describe("BehaviorTree", () => {
   describe("getNodePathById", () => {
     it("should return path by node ID", () => {
       const root = new Sequence({ id: "root" });
-      const step = new Step({ id: "step-1", name: "step" });
+      const step = new Sequence({ id: "step-1", name: "step" });
       const action = new PrintAction({ id: "action-1", message: "Test" });
 
       step.addChild(action);
@@ -249,8 +242,8 @@ describe("BehaviorTree", () => {
 
     it("should replace composite and reindex new children", () => {
       const root = new Sequence({ id: "root" });
-      const step1 = new Step({ id: "step1", name: "step1" });
-      const step2 = new Step({ id: "step2", name: "step2" });
+      const step1 = new Sequence({ id: "step1", name: "step1" });
+      const step2 = new Sequence({ id: "step2", name: "step2" });
 
       step1.addChild(new PrintAction({ id: "old-action", message: "Old" }));
       step2.addChild(new PrintAction({ id: "other-action", message: "Other" }));
@@ -259,7 +252,7 @@ describe("BehaviorTree", () => {
       const tree = new BehaviorTree(root);
 
       // Replace step1 with new step
-      const newStep = new Step({ id: "step1-new", name: "step1-new" });
+      const newStep = new Sequence({ id: "step1-new", name: "step1-new" });
       newStep.addChild(new PrintAction({ id: "new-action", message: "New" }));
       tree.replaceNodeAtPath("/0", newStep);
 
@@ -294,8 +287,8 @@ describe("BehaviorTree", () => {
 
     it("should replace leaf node in deeply nested tree", () => {
       const root = new Sequence({ id: "root" });
-      const step1 = new Step({ id: "step1", name: "step1" });
-      const step2 = new Step({ id: "step2", name: "step2" });
+      const step1 = new Sequence({ id: "step1", name: "step1" });
+      const step2 = new Sequence({ id: "step2", name: "step2" });
       const innerSeq = new Sequence({ id: "inner" });
       const action = new PrintAction({ id: "deep-action", message: "Deep" });
 
@@ -342,69 +335,6 @@ describe("BehaviorTree", () => {
         );
       }).toThrow("Node not found at path");
     });
-  });
-
-  describe("Integration with TickEngine", () => {
-    it.effect("should execute tree after node replacement", () =>
-      Effect.gen(function* (_) {
-        const seq = new Sequence({ id: "seq" });
-        seq.addChildren([
-          new SuccessNode({ id: "n1" }),
-          new FailureNode({ id: "n2" }),
-          new SuccessNode({ id: "n3" }),
-        ]);
-
-        const tree = new BehaviorTree(seq);
-        const blackboard = new ScopedBlackboard();
-        const treeRegistry = new Registry();
-
-        // First execution fails at n2
-        const engine = new TickEngine(tree.getRoot(), { treeRegistry });
-        let result = yield* _(Effect.promise(() => engine.tick(blackboard)));
-        expect(result).toBe(NodeStatus.FAILURE);
-
-        // Replace failing node using path
-        tree.replaceNodeAtPath("/1", new SuccessNode({ id: "n2-fixed" }));
-
-        // Execute with updated tree (new engine with updated root)
-        const engine2 = new TickEngine(tree.getRoot(), { treeRegistry });
-        result = yield* _(Effect.promise(() => engine2.tick(blackboard)));
-        expect(result).toBe(NodeStatus.SUCCESS);
-      }),
-    );
-
-    it.effect("should execute replaced composite node correctly", () =>
-      Effect.gen(function* (_) {
-        const root = new Sequence({ id: "root" });
-        const step1 = new Step({ id: "step1", name: "step1" });
-        const step2 = new Step({ id: "step2", name: "step2" });
-
-        // step1 has a failing action
-        step1.addChild(new FailureNode({ id: "s1-fail" }));
-        step2.addChild(new SuccessNode({ id: "s2-ok" }));
-
-        root.addChildren([step1, step2]);
-
-        const tree = new BehaviorTree(root);
-        const blackboard = new ScopedBlackboard();
-        const treeRegistry = new Registry();
-
-        // First execution fails
-        const engine1 = new TickEngine(tree.getRoot(), { treeRegistry });
-        let result = yield* _(Effect.promise(() => engine1.tick(blackboard)));
-        expect(result).toBe(NodeStatus.FAILURE);
-
-        // Replace step1 with a working version
-        const newStep1 = new Step({ id: "step1-fixed", name: "step1-fixed" });
-        newStep1.addChild(new SuccessNode({ id: "s1-ok" }));
-        tree.replaceNodeAtPath("/0", newStep1);
-
-        // Now execution succeeds
-        const engine2 = new TickEngine(tree.getRoot(), { treeRegistry });
-        result = yield* _(Effect.promise(() => engine2.tick(blackboard)));
-        expect(result).toBe(NodeStatus.SUCCESS);
-      }),
-    );
   });
 
   describe("Multiple Replacements", () => {

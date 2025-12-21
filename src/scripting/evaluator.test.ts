@@ -3,17 +3,17 @@
  * Tests script evaluation against blackboard
  */
 
-import { beforeEach, describe, expect, it } from "@effect/vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import antlr4 from "antlr4";
 import { ScopedBlackboard } from "../blackboard.js";
-import type { EffectTickContext } from "../types.js";
+import type { TemporalContext } from "../types.js";
 import { ScriptEvaluator } from "./evaluator.js";
 import ScriptLangLexer from "./generated/ScriptLangLexer.js";
 import ScriptLangParser from "./generated/ScriptLangParser.js";
 
 describe("ScriptEvaluator", () => {
   let blackboard: ScopedBlackboard;
-  let context: EffectTickContext;
+  let context: TemporalContext;
 
   beforeEach(() => {
     blackboard = new ScopedBlackboard();
@@ -21,7 +21,6 @@ describe("ScriptEvaluator", () => {
       blackboard,
       timestamp: Date.now(),
       deltaTime: 0,
-      runningOps: new Map(),
       testData: new Map(),
     };
   });

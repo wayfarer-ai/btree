@@ -2,12 +2,10 @@
  * While node - Loop while condition is true
  */
 
-import * as Effect from "effect/Effect";
-
 import { CompositeNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
   type TreeNode,
@@ -52,103 +50,87 @@ export class While extends CompositeNode {
     }
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    if (!this.condition) {
+      throw new ConfigurationError("While requires a condition child");
+    }
+    if (!this.body) {
+      throw new ConfigurationError("While requires a body child");
+    }
 
-    return Effect.gen(function* (_) {
-      if (!self.condition) {
-        return yield* _(
-          Effect.fail(
-            new ConfigurationError("While requires a condition child"),
-          ),
-        );
-      }
-      if (!self.body) {
-        return yield* _(
-          Effect.fail(new ConfigurationError("While requires a body child")),
-        );
-      }
+    this.log(
+      `Starting while loop (iteration ${this.currentIteration}/${this.maxIterations})`,
+    );
 
-      self.log(
-        `Starting while loop (iteration ${self.currentIteration}/${self.maxIterations})`,
-      );
+    // Loop while condition is SUCCESS
+    while (this.currentIteration < this.maxIterations) {
+      // Check for cancellation before each iteration
+      checkSignal(context.signal);
 
-      // Loop while condition is SUCCESS
-      while (self.currentIteration < self.maxIterations) {
-        // Check for cancellation before each iteration
-        yield* _(checkSignal(context.signal));
+      // Only check condition if body hasn't started for this iteration
+      if (!this.bodyStarted) {
+        // Evaluate condition
+        this.log(`Evaluating condition (iteration ${this.currentIteration})`);
+        const conditionStatus = await this.condition.tick(context);
 
-        // Only check condition if body hasn't started for this iteration
-        if (!self.bodyStarted) {
-          // Evaluate condition
-          self.log(`Evaluating condition (iteration ${self.currentIteration})`);
-          const conditionStatus = yield* _(self.condition.tick(context));
-
-          if (conditionStatus === NodeStatus.RUNNING) {
-            self.log("Condition is running");
-            self._status = NodeStatus.RUNNING;
-            return NodeStatus.RUNNING;
-          }
-
-          if (conditionStatus === NodeStatus.FAILURE) {
-            self.log("Condition failed - exiting loop");
-            self._status = NodeStatus.SUCCESS;
-            self.currentIteration = 0;
-            self.bodyStarted = false;
-            return NodeStatus.SUCCESS;
-          }
-
-          // Condition succeeded, mark body as started
-          self.bodyStarted = true;
-        } else {
-          self.log(
-            `Body already started for iteration ${self.currentIteration} - continuing execution`,
-          );
+        if (conditionStatus === NodeStatus.RUNNING) {
+          this.log("Condition is running");
+          this._status = NodeStatus.RUNNING;
+          return NodeStatus.RUNNING;
         }
 
-        // Execute body
-        self.log(`Executing body (iteration ${self.currentIteration})`);
-        const bodyStatus = yield* _(self.body.tick(context));
-
-        switch (bodyStatus) {
-          case NodeStatus.SUCCESS:
-            self.log("Body succeeded - continuing loop");
-            self.currentIteration++;
-            self.bodyStarted = false; // Reset for next iteration
-            self.condition.reset(); // Reset for next iteration
-            self.body.reset();
-            break;
-
-          case NodeStatus.FAILURE:
-            self.log("Body failed - While fails");
-            self._status = NodeStatus.FAILURE;
-            self.currentIteration = 0;
-            self.bodyStarted = false;
-            return NodeStatus.FAILURE;
-
-          case NodeStatus.RUNNING:
-            self.log("Body is running");
-            self._status = NodeStatus.RUNNING;
-            return NodeStatus.RUNNING;
-
-          default:
-            return yield* _(
-              Effect.fail(
-                new Error(`Unexpected status from body: ${bodyStatus}`),
-              ),
-            );
+        if (conditionStatus === NodeStatus.FAILURE) {
+          this.log("Condition failed - exiting loop");
+          this._status = NodeStatus.SUCCESS;
+          this.currentIteration = 0;
+          this.bodyStarted = false;
+          return NodeStatus.SUCCESS;
         }
+
+        // Condition succeeded, mark body as started
+        this.bodyStarted = true;
+      } else {
+        this.log(
+          `Body already started for iteration ${this.currentIteration} - continuing execution`,
+        );
       }
 
-      // Max iterations reached
-      self.log(`Max iterations (${self.maxIterations}) reached`);
-      self._status = NodeStatus.FAILURE;
-      self.currentIteration = 0;
-      self.bodyStarted = false;
-      return NodeStatus.FAILURE;
-    });
+      // Execute body
+      this.log(`Executing body (iteration ${this.currentIteration})`);
+      const bodyStatus = await this.body.tick(context);
+
+      switch (bodyStatus) {
+        case NodeStatus.SUCCESS:
+          this.log("Body succeeded - continuing loop");
+          this.currentIteration++;
+          this.bodyStarted = false; // Reset for next iteration
+          this.condition.reset(); // Reset for next iteration
+          this.body.reset();
+          break;
+
+        case NodeStatus.FAILURE:
+          this.log("Body failed - While fails");
+          this._status = NodeStatus.FAILURE;
+          this.currentIteration = 0;
+          this.bodyStarted = false;
+          return NodeStatus.FAILURE;
+
+        case NodeStatus.RUNNING:
+          this.log("Body is running");
+          this._status = NodeStatus.RUNNING;
+          return NodeStatus.RUNNING;
+
+        default:
+          throw new Error(`Unexpected status from body: ${bodyStatus}`);
+      }
+    }
+
+    // Max iterations reached
+    this.log(`Max iterations (${this.maxIterations}) reached`);
+    this._status = NodeStatus.FAILURE;
+    this.currentIteration = 0;
+    this.bodyStarted = false;
+    return NodeStatus.FAILURE;
   }
 
   protected onReset(): void {

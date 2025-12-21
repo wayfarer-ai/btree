@@ -2,11 +2,9 @@
  * Recovery node - Try-catch-finally error handling
  */
 
-import * as Effect from "effect/Effect";
-
 import { CompositeNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
-import { type EffectTickContext, NodeStatus, type TreeNode } from "../types.js";
+import { type TemporalContext, NodeStatus, type TreeNode } from "../types.js";
 import { checkSignal } from "../utils/signal-check.js";
 
 /**
@@ -53,50 +51,40 @@ export class Recovery extends CompositeNode {
     }
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    // Check for cancellation before starting try-catch-finally
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      // Check for cancellation before starting try-catch-finally
-      yield* _(checkSignal(context.signal));
+    if (!this.tryBranch) {
+      throw new ConfigurationError("Recovery requires at least a try branch");
+    }
 
-      if (!self.tryBranch) {
-        return yield* _(
-          Effect.fail(
-            new ConfigurationError("Recovery requires at least a try branch"),
-          ),
-        );
-      }
+    // Execute try branch and determine result
+    this.log("Executing try branch");
+    const tryResult = await this.tryBranch.tick(context);
 
-      // Execute try branch and determine result
-      self.log("Executing try branch");
-      const tryResult = yield* _(self.tryBranch.tick(context));
+    // Determine the main result (from try or catch)
+    let mainResult: NodeStatus;
 
-      // Determine the main result (from try or catch)
-      let mainResult: NodeStatus;
+    if (tryResult === NodeStatus.FAILURE && this.catchBranch) {
+      // Try failed and we have a catch branch - execute it
+      this.log("Try branch failed - executing catch branch");
+      mainResult = await this.catchBranch.tick(context);
+    } else {
+      // Try succeeded, running, or no catch branch
+      mainResult = tryResult;
+    }
 
-      if (tryResult === NodeStatus.FAILURE && self.catchBranch) {
-        // Try failed and we have a catch branch - execute it
-        self.log("Try branch failed - executing catch branch");
-        mainResult = yield* _(self.catchBranch.tick(context));
-      } else {
-        // Try succeeded, running, or no catch branch
-        mainResult = tryResult;
-      }
+    // Always execute finally branch if it exists
+    // Finally branch should not affect the main result (unless it throws ConfigurationError/OperationCancelledError)
+    if (this.finallyBranch) {
+      this.log("Executing finally branch");
+      // Execute finally and ignore its status (but let special errors propagate)
+      await this.finallyBranch.tick(context);
+      this.log("Finally branch completed");
+    }
 
-      // Always execute finally branch if it exists
-      // Finally branch should not affect the main result (unless it throws ConfigurationError/OperationCancelledError)
-      if (self.finallyBranch) {
-        self.log("Executing finally branch");
-        // Execute finally and ignore its status (but let special errors propagate)
-        yield* _(self.finallyBranch.tick(context));
-        self.log("Finally branch completed");
-      }
-
-      self._status = mainResult;
-      return mainResult;
-    });
+    this._status = mainResult;
+    return mainResult;
   }
 }

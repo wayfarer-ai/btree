@@ -2,10 +2,9 @@
  * Conditional node - If-then-else logic for behavior trees
  */
 
-import * as Effect from "effect/Effect";
 import { CompositeNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
-import { type EffectTickContext, NodeStatus, type TreeNode } from "../types.js";
+import { type TemporalContext, NodeStatus, type TreeNode } from "../types.js";
 import { checkSignal } from "../utils/signal-check.js";
 
 /**
@@ -45,95 +44,74 @@ export class Conditional extends CompositeNode {
     }
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    // Check for cancellation before processing conditional
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      // Check for cancellation before processing conditional
-      // OperationCancelledError will be caught by base node's catchAll and re-thrown
-      yield* _(checkSignal(context.signal));
+    if (!this.condition) {
+      throw new Error("Conditional requires at least a condition child");
+    }
 
-      if (!self.condition) {
-        return yield* _(
-          Effect.fail(
-            new Error("Conditional requires at least a condition child"),
-          ),
-        );
+    if (!this.thenBranch) {
+      throw new Error(
+        "Conditional requires at least condition and then branch",
+      );
+    }
+
+    // Only evaluate condition if not already evaluated
+    if (!this.conditionEvaluated) {
+      this.log("Evaluating condition");
+      const conditionStatus = await this.condition.tick(context);
+
+      switch (conditionStatus) {
+        case NodeStatus.SUCCESS:
+          this.log("Condition succeeded - will execute then branch");
+          this.selectedBranch = this.thenBranch;
+          this.conditionEvaluated = true;
+          break;
+
+        case NodeStatus.FAILURE:
+          if (this.elseBranch) {
+            this.log("Condition failed - will execute else branch");
+            this.selectedBranch = this.elseBranch;
+            this.conditionEvaluated = true;
+          } else {
+            this.log("Condition failed - no else branch, returning FAILURE");
+            this._status = NodeStatus.FAILURE;
+            return NodeStatus.FAILURE;
+          }
+          break;
+
+        case NodeStatus.RUNNING:
+          this.log("Condition is running");
+          this._status = NodeStatus.RUNNING;
+          return NodeStatus.RUNNING;
+
+        default:
+          throw new Error(
+            `Unexpected status from condition: ${conditionStatus}`,
+          );
       }
+    } else {
+      this.log("Condition already evaluated - continuing branch execution");
+    }
 
-      if (!self.thenBranch) {
-        return yield* _(
-          Effect.fail(
-            new Error(
-              "Conditional requires at least condition and then branch",
-            ),
-          ),
-        );
-      }
+    // Execute selected branch
+    if (!this.selectedBranch) {
+      throw new Error("No branch selected for execution");
+    }
 
-      // Only evaluate condition if not already evaluated
-      if (!self.conditionEvaluated) {
-        self.log("Evaluating condition");
-        const conditionStatus = yield* _(self.condition.tick(context));
+    const branchStatus = await this.selectedBranch.tick(context);
+    this._status = branchStatus;
 
-        switch (conditionStatus) {
-          case NodeStatus.SUCCESS:
-            self.log("Condition succeeded - will execute then branch");
-            self.selectedBranch = self.thenBranch;
-            self.conditionEvaluated = true;
-            break;
+    // Reset flag when branch completes
+    if (branchStatus !== NodeStatus.RUNNING) {
+      this.log("Branch completed - resetting condition check flag");
+      this.conditionEvaluated = false;
+      this.selectedBranch = undefined;
+    }
 
-          case NodeStatus.FAILURE:
-            if (self.elseBranch) {
-              self.log("Condition failed - will execute else branch");
-              self.selectedBranch = self.elseBranch;
-              self.conditionEvaluated = true;
-            } else {
-              self.log("Condition failed - no else branch, returning FAILURE");
-              self._status = NodeStatus.FAILURE;
-              return NodeStatus.FAILURE;
-            }
-            break;
-
-          case NodeStatus.RUNNING:
-            self.log("Condition is running");
-            self._status = NodeStatus.RUNNING;
-            return NodeStatus.RUNNING;
-
-          default:
-            return yield* _(
-              Effect.fail(
-                new Error(
-                  `Unexpected status from condition: ${conditionStatus}`,
-                ),
-              ),
-            );
-        }
-      } else {
-        self.log("Condition already evaluated - continuing branch execution");
-      }
-
-      // Execute selected branch
-      if (!self.selectedBranch) {
-        return yield* _(
-          Effect.fail(new Error("No branch selected for execution")),
-        );
-      }
-
-      const branchStatus = yield* _(self.selectedBranch.tick(context));
-      self._status = branchStatus;
-
-      // Reset flag when branch completes
-      if (branchStatus !== NodeStatus.RUNNING) {
-        self.log("Branch completed - resetting condition check flag");
-        self.conditionEvaluated = false;
-        self.selectedBranch = undefined;
-      }
-
-      return branchStatus;
-    });
+    return branchStatus;
   }
 
   protected onHalt(): void {

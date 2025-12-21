@@ -2,10 +2,9 @@
  * Simple test nodes for demonstrating behavior tree functionality
  */
 
-import * as Effect from "effect/Effect";
 import { ActionNode, ConditionNode } from "./base-node.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "./types.js";
@@ -21,20 +20,16 @@ export class PrintAction extends ActionNode {
     this.message = config.message || "Hello from PrintAction!";
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      this.log(`Executing: "${this.message}"`);
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    this.log(`Executing: "${this.message}"`);
 
-      // Optionally store result in blackboard
-      if (this.config.outputKey && typeof this.config.outputKey === "string") {
-        context.blackboard.set(this.config.outputKey, this.message);
-      }
+    // Optionally store result in blackboard
+    if (this.config.outputKey && typeof this.config.outputKey === "string") {
+      context.blackboard.set(this.config.outputKey, this.message);
+    }
 
-      this._status = NodeStatus.SUCCESS;
-      return NodeStatus.SUCCESS;
-    });
+    this._status = NodeStatus.SUCCESS;
+    return NodeStatus.SUCCESS;
   }
 }
 
@@ -50,30 +45,26 @@ export class WaitAction extends ActionNode {
     this.waitMs = config.waitMs || 1000;
   }
 
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      if (this.startTime === null) {
-        this.startTime = Date.now();
-        this.log(`Starting wait for ${this.waitMs}ms`);
-        this._status = NodeStatus.RUNNING;
-        return NodeStatus.RUNNING;
-      }
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+    if (this.startTime === null) {
+      this.startTime = Date.now();
+      this.log(`Starting wait for ${this.waitMs}ms`);
+      this._status = NodeStatus.RUNNING;
+      return NodeStatus.RUNNING;
+    }
 
-      const elapsed = Date.now() - this.startTime;
+    const elapsed = Date.now() - this.startTime;
 
-      if (elapsed < this.waitMs) {
-        this.log(`Waiting... ${this.waitMs - elapsed}ms remaining`);
-        this._status = NodeStatus.RUNNING;
-        return NodeStatus.RUNNING;
-      }
+    if (elapsed < this.waitMs) {
+      this.log(`Waiting... ${this.waitMs - elapsed}ms remaining`);
+      this._status = NodeStatus.RUNNING;
+      return NodeStatus.RUNNING;
+    }
 
-      this.log(`Wait completed after ${elapsed}ms`);
-      this.startTime = null;
-      this._status = NodeStatus.SUCCESS;
-      return NodeStatus.SUCCESS;
-    });
+    this.log(`Wait completed after ${elapsed}ms`);
+    this.startTime = null;
+    this._status = NodeStatus.SUCCESS;
+    return NodeStatus.SUCCESS;
   }
 
   protected onReset(): void {
@@ -100,22 +91,18 @@ export class CounterAction extends ActionNode {
     this.increment = config.increment || 1;
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      const currentValue =
-        (context.blackboard.get(this.counterKey) as number) || 0;
-      const newValue = currentValue + this.increment;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    const currentValue =
+      (context.blackboard.get(this.counterKey) as number) || 0;
+    const newValue = currentValue + this.increment;
 
-      context.blackboard.set(this.counterKey, newValue);
-      this.log(
-        `Counter '${this.counterKey}' incremented from ${currentValue} to ${newValue}`,
-      );
+    context.blackboard.set(this.counterKey, newValue);
+    this.log(
+      `Counter '${this.counterKey}' incremented from ${currentValue} to ${newValue}`,
+    );
 
-      this._status = NodeStatus.SUCCESS;
-      return NodeStatus.SUCCESS;
-    });
+    this._status = NodeStatus.SUCCESS;
+    return NodeStatus.SUCCESS;
   }
 }
 
@@ -138,25 +125,21 @@ export class MockAction extends ActionNode {
     this.ticksBeforeComplete = config.ticksBeforeComplete || 1;
   }
 
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      this.currentTicks++;
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+    this.currentTicks++;
 
-      if (this.currentTicks < this.ticksBeforeComplete) {
-        this.log(
-          `Running... (tick ${this.currentTicks}/${this.ticksBeforeComplete})`,
-        );
-        this._status = NodeStatus.RUNNING;
-        return NodeStatus.RUNNING;
-      }
+    if (this.currentTicks < this.ticksBeforeComplete) {
+      this.log(
+        `Running... (tick ${this.currentTicks}/${this.ticksBeforeComplete})`,
+      );
+      this._status = NodeStatus.RUNNING;
+      return NodeStatus.RUNNING;
+    }
 
-      this.log(`Completing with status: ${this.returnStatus}`);
-      this.currentTicks = 0;
-      this._status = this.returnStatus;
-      return this.returnStatus;
-    });
+    this.log(`Completing with status: ${this.returnStatus}`);
+    this.currentTicks = 0;
+    this._status = this.returnStatus;
+    return this.returnStatus;
   }
 
   protected onReset(): void {
@@ -190,41 +173,37 @@ export class CheckCondition extends ConditionNode {
     this.value = config.value;
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      const actualValue = context.blackboard.get(this.key);
-      let result = false;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    const actualValue = context.blackboard.get(this.key);
+    let result = false;
 
-      switch (this.operator) {
-        case "==":
-          result = actualValue === this.value;
-          break;
-        case "!=":
-          result = actualValue !== this.value;
-          break;
-        case ">":
-          result = (actualValue as number) > (this.value as number);
-          break;
-        case "<":
-          result = (actualValue as number) < (this.value as number);
-          break;
-        case ">=":
-          result = (actualValue as number) >= (this.value as number);
-          break;
-        case "<=":
-          result = (actualValue as number) <= (this.value as number);
-          break;
-      }
+    switch (this.operator) {
+      case "==":
+        result = actualValue === this.value;
+        break;
+      case "!=":
+        result = actualValue !== this.value;
+        break;
+      case ">":
+        result = (actualValue as number) > (this.value as number);
+        break;
+      case "<":
+        result = (actualValue as number) < (this.value as number);
+        break;
+      case ">=":
+        result = (actualValue as number) >= (this.value as number);
+        break;
+      case "<=":
+        result = (actualValue as number) <= (this.value as number);
+        break;
+    }
 
-      this.log(
-        `Checking: ${this.key} ${this.operator} ${this.value} => ${actualValue} ${this.operator} ${this.value} = ${result}`,
-      );
+    this.log(
+      `Checking: ${this.key} ${this.operator} ${this.value} => ${actualValue} ${this.operator} ${this.value} = ${result}`,
+    );
 
-      this._status = result ? NodeStatus.SUCCESS : NodeStatus.FAILURE;
-      return this._status;
-    });
+    this._status = result ? NodeStatus.SUCCESS : NodeStatus.FAILURE;
+    return this._status;
   }
 }
 
@@ -239,14 +218,10 @@ export class AlwaysCondition extends ConditionNode {
     this.returnStatus = config.returnStatus || NodeStatus.SUCCESS;
   }
 
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      this.log(`Returning ${this.returnStatus}`);
-      this._status = this.returnStatus;
-      return this.returnStatus;
-    });
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+    this.log(`Returning ${this.returnStatus}`);
+    this._status = this.returnStatus;
+    return this.returnStatus;
   }
 }
 
@@ -254,14 +229,10 @@ export class AlwaysCondition extends ConditionNode {
  * Simple test node that always succeeds
  */
 export class SuccessNode extends ActionNode {
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      this.log("Executing (SUCCESS)");
-      this._status = NodeStatus.SUCCESS;
-      return NodeStatus.SUCCESS;
-    });
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+    this.log("Executing (SUCCESS)");
+    this._status = NodeStatus.SUCCESS;
+    return NodeStatus.SUCCESS;
   }
 }
 
@@ -269,14 +240,10 @@ export class SuccessNode extends ActionNode {
  * Simple test node that always fails
  */
 export class FailureNode extends ActionNode {
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      this.log("Executing (FAILURE)");
-      this._status = NodeStatus.FAILURE;
-      return NodeStatus.FAILURE;
-    });
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+    this.log("Executing (FAILURE)");
+    this._status = NodeStatus.FAILURE;
+    return NodeStatus.FAILURE;
   }
 }
 
@@ -284,13 +251,9 @@ export class FailureNode extends ActionNode {
  * Simple test node that stays running
  */
 export class RunningNode extends ActionNode {
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
-    return Effect.sync(() => {
-      this.log("Executing (RUNNING)");
-      this._status = NodeStatus.RUNNING;
-      return NodeStatus.RUNNING;
-    });
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+    this.log("Executing (RUNNING)");
+    this._status = NodeStatus.RUNNING;
+    return NodeStatus.RUNNING;
   }
 }

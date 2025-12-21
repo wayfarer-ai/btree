@@ -3,7 +3,7 @@
  * Tests the ANTLR grammar and parsing
  */
 
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it } from "vitest";
 import antlr4 from "antlr4";
 import ScriptLangLexer from "./generated/ScriptLangLexer.js";
 import ScriptLangParser from "./generated/ScriptLangParser.js";

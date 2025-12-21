@@ -3,51 +3,40 @@
  * Inverts the result of its child (SUCCESS becomes FAILURE and vice versa)
  */
 
-import * as Effect from "effect/Effect";
 import { DecoratorNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
-import { type EffectTickContext, NodeStatus } from "../types.js";
+import { type TemporalContext, NodeStatus } from "../types.js";
 import { checkSignal } from "../utils/signal-check.js";
 
 export class Invert extends DecoratorNode {
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      yield* _(checkSignal(context.signal));
+    if (!this.child) {
+      throw new ConfigurationError(`${this.name}: Decorator must have a child`);
+    }
 
-      if (!self.child) {
-        return yield* _(
-          Effect.fail(
-            new ConfigurationError(`${self.name}: Decorator must have a child`),
-          ),
-        );
-      }
+    this.log("Ticking child");
+    const childStatus = await this.child.tick(context);
 
-      self.log("Ticking child");
-      const childStatus = yield* _(self.child.tick(context));
+    switch (childStatus) {
+      case NodeStatus.SUCCESS:
+        this.log("Child succeeded - returning FAILURE");
+        this._status = NodeStatus.FAILURE;
+        return NodeStatus.FAILURE;
 
-      switch (childStatus) {
-        case NodeStatus.SUCCESS:
-          self.log("Child succeeded - returning FAILURE");
-          self._status = NodeStatus.FAILURE;
-          return NodeStatus.FAILURE;
+      case NodeStatus.FAILURE:
+        this.log("Child failed - returning SUCCESS");
+        this._status = NodeStatus.SUCCESS;
+        return NodeStatus.SUCCESS;
 
-        case NodeStatus.FAILURE:
-          self.log("Child failed - returning SUCCESS");
-          self._status = NodeStatus.SUCCESS;
-          return NodeStatus.SUCCESS;
+      case NodeStatus.RUNNING:
+        this.log("Child is running");
+        this._status = NodeStatus.RUNNING;
+        return NodeStatus.RUNNING;
 
-        case NodeStatus.RUNNING:
-          self.log("Child is running");
-          self._status = NodeStatus.RUNNING;
-          return NodeStatus.RUNNING;
-
-        default:
-          return childStatus;
-      }
-    });
+      default:
+        return childStatus;
+    }
   }
 }
