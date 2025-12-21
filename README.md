@@ -1,16 +1,15 @@
-# @wayfarer-ai/btree
+# @wayfarer-ai/btree-workflows
 
-Core behavior tree implementation for TypeScript, designed for AI-native test automation.
+Core behavior tree implementation for TypeScript, designed for AI-native workflows.
 
 ## Features
 
 - ✅ **22 Production-Ready Nodes**: 11 composites + 10 decorators + 1 scripting node for comprehensive control flow
-- ✅ **Full Async Support**: Effect-TS powered async operations with proper RUNNING state management
+- ✅ **Temporal Workflows**: Native integration with Temporal for durable, resumable workflow execution
 - ✅ **Hierarchical Blackboard**: Scoped data storage with inheritance and deep cloning
-- ✅ **Resumable Execution**: Pause, modify, and resume execution mid-flight for debugging
 - ✅ **Event System**: Observable node lifecycle events for real-time monitoring
 - ✅ **Smart Execution Snapshots**: Capture-on-change with diffs & execution traces for efficient debugging
-- ✅ **Type-Safe**: Strongly typed TypeScript with **595 tests passing** (95%+ coverage)
+- ✅ **Type-Safe**: Strongly typed TypeScript with **520 tests passing** (89%+ coverage)
 
 ## Installation
 
@@ -49,8 +48,7 @@ await engine.tick(blackboard);
 | `Sequence` | Execute in order | Happy path flows |
 | `Selector` | Try until success | Fallback strategies |
 | `Parallel` | Execute concurrently | Parallel operations |
-| `Step` | Organize & scope | Test step isolation |
-| `StepGroup` | Reference reusable steps | DRY step sequences |
+| `SubTree` | Reference reusable workflow | DRY workflows |
 | `MemorySequence` | Skip completed | Expensive retries |
 | `ReactiveSequence` | Always restart | Reactive monitoring |
 | `Conditional` | If-then-else | Branching logic |
@@ -150,8 +148,7 @@ enum NodeStatus {
   SUCCESS,   // Completed successfully
   FAILURE,   // Failed
   RUNNING,   // Still executing (async)
-  IDLE,      // Not started
-  SKIPPED    // Skipped execution
+  IDLE       // Not started
 }
 ```
 
@@ -336,32 +333,40 @@ console.log(context.blackboard.get('apiUrl'));
 
 ## Advanced Features
 
-### 🔄 Resumable Execution
+### 🌊 Temporal Workflows
 
-Pause execution, modify the behavior tree, and resume from a specific node - perfect for debugging and AI-assisted test correction:
+Behavior trees can run as **Temporal workflows** for durable, fault-tolerant execution with native resumability:
 
 ```typescript
-const engine = new TickEngine(testTree);
+import { BehaviorTree, Sequence, PrintAction } from '@wayfarer-ai/btree';
+import type { WorkflowArgs, WorkflowResult } from '@wayfarer-ai/btree';
 
-// First attempt - might fail
-await engine.tick(blackboard);
+// Define workflow
+export async function myWorkflow(args: WorkflowArgs): Promise<WorkflowResult> {
+  // Build behavior tree
+  const root = new Sequence({ id: 'root' });
+  root.addChild(new PrintAction({ id: 'step1', message: 'Hello' }));
+  root.addChild(new PrintAction({ id: 'step2', message: 'World' }));
 
-// Resume from a specific node (e.g., after fixing a bug)
-const resumeContext = engine.createResumeContext(
-  blackboard,
-  'step_3',  // Node ID to resume from
-  'session_123'
-);
+  // Convert to Temporal workflow
+  const tree = new BehaviorTree(root);
+  const workflow = tree.toWorkflow();
 
-await engine.tick(resumeContext.blackboard);
+  // Execute
+  return workflow(args);
+}
 ```
 
-**Use Cases:**
-- **Debugging**: Pause at failure, inspect state, resume after fix
-- **Dry-Run Agents**: AI generates BT → executes → corrects mistakes → resumes
-- **Test Maintenance**: Fix broken tests without re-running entire flow
+**Temporal Benefits:**
+- **Automatic Resumability**: Workflows resume automatically after failures through event sourcing and deterministic replay
+- **Durable Execution**: Workflow state persists across process crashes and restarts
+- **Long-Running Workflows**: Run for days, weeks, or months without state loss
+- **Built-in Retries**: Activities can retry with exponential backoff
+- **Observability**: Full execution history and timeline in Temporal UI
 
-See [`examples/resumable-execution.ts`](./examples/resumable-execution.ts) for complete examples.
+**No Manual Resume Needed**: Unlike standalone execution, Temporal handles all resumability automatically. If a workflow crashes or times out, Temporal replays the event history and resumes from the exact point of failure.
+
+See [`examples/temporal/`](./examples/temporal/) for complete Temporal integration examples.
 
 ### 📡 Event System
 
@@ -516,7 +521,7 @@ npm run test:watch      # Watch mode
 npm run test:ui         # UI mode
 ```
 
-Current status: **595 tests passing** across 38 test files with **95%+ coverage**
+Current status: **520 tests passing** across 35 test files with **89%+ coverage**
 
 ### Building
 ```bash
@@ -592,16 +597,14 @@ src/
 1. **Create node file** in `src/composites/` or `src/decorators/`
 2. **Extend base class**:
    ```typescript
-   import * as Effect from 'effect/Effect'
-   import { EffectTickContext } from '@wayfarer-ai/btree'
+   import { CompositeNode } from '@wayfarer-ai/btree';
+   import { TemporalContext, NodeStatus } from '@wayfarer-ai/btree';
 
    export class MyNode extends CompositeNode {
-     protected executeTick(context: EffectTickContext): Effect.Effect<NodeStatus, Error, never> {
-       return Effect.gen(function* (_) {
-         // Implementation using Effect.gen
-         const status = yield* _(this.child.tick(context));
-         return status;
-       });
+     protected async executeTick(context: TemporalContext): Promise<NodeStatus> {
+       // Implementation using async/await
+       const status = await this.child.tick(context);
+       return status;
      }
 
      protected onHalt(): void { /* cleanup */ }
@@ -666,10 +669,11 @@ The `_lastError` is automatically surfaced via `tickWhileRunning()` result and t
 
 **Core Principles:**
 - **Nodes**: All nodes inherit from `BaseNode` and implement `tick(context)`
-- **Status**: Every tick returns `SUCCESS | FAILURE | RUNNING | IDLE | SKIPPED`
+- **Status**: Every tick returns `SUCCESS | FAILURE | RUNNING | IDLE`
 - **State**: `ScopedBlackboard` provides hierarchical data with inheritance
-- **Execution**: `TickEngine` coordinates ticking with cancellation support
-- **Async**: Effect-TS powered async operations with proper RUNNING status propagation (parents observe RUNNING across ticks)
+- **Execution**: Workflows execute via Temporal for production use, or standalone for testing/development
+- **Async**: Async/await powered operations with proper RUNNING status propagation (parents observe RUNNING across ticks)
+- **Temporal Integration**: Native workflow conversion via `tree.toWorkflow()` for durable execution
 
 **Design Patterns:**
 - **Composite Pattern**: Nodes contain child nodes
