@@ -16,14 +16,17 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "@temporalio/workflow": "^1.10.0",
     "@temporalio/activity": "^1.10.0",
-    "antlr4": "^4.13.2"
+    "@temporalio/workflow": "^1.10.0",
+    "antlr4": "^4.13.2",
+    "js-yaml": "^4.1.1",
+    "zod": "^4.2.1"
   },
   "devDependencies": {
     "@temporalio/client": "^1.10.0",
-    "@temporalio/worker": "^1.10.0",
     "@temporalio/testing": "^1.10.0",
+    "@temporalio/worker": "^1.10.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.2.1",
     "@vitest/coverage-v8": "^3.2.4",
     "@vitest/ui": "^3.2.4",

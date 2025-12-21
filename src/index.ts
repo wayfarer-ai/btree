@@ -24,6 +24,7 @@ export * from "./decorators/index.js";
 export * from "./events.js";
 // Registry
 export { Registry } from "./registry.js";
+export { registerStandardNodes } from "./registry-utils.js";
 // Scripting nodes
 export * from "./scripting/index.js";
 // Test nodes (for examples and testing)
@@ -45,3 +46,7 @@ export * from "./utilities/index.js";
 export * from "./debug/index.js";
 // Error types
 export { ConfigurationError } from "./errors.js";
+// YAML parsing and validation
+export * from "./yaml/index.js";
+// Schemas (for advanced usage)
+export * from "./schemas/index.js";

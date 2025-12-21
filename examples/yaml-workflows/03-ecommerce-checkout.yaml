@@ -1,0 +1,94 @@
+# E-commerce Checkout Workflow
+# Complexity: Medium (UI-Moderate, LLM-Easy)
+# Use case: Process order with validation, payment, and post-checkout tasks
+
+type: Sequence
+id: checkout-workflow
+name: E-commerce Checkout
+
+children:
+  # Step 1: Validate cart and inventory
+  - type: Sequence
+    id: validation-phase
+    name: Validation Phase
+    children:
+      - type: PrintAction
+        id: validate-cart
+        props:
+          message: "Validating shopping cart..."
+
+      - type: CheckCondition
+        id: check-cart-items
+        props:
+          key: cart.items
+          operator: ">"
+          value: 0
+
+      - type: CheckCondition
+        id: check-inventory
+        props:
+          key: inventory.available
+          operator: "=="
+          value: true
+
+  # Step 2: Process payment with timeout and retry
+  - type: Timeout
+    id: payment-timeout
+    props:
+      timeoutMs: 30000
+    children:
+      - type: Sequence
+        id: payment-sequence
+        children:
+          - type: PrintAction
+            id: init-payment
+            props:
+              message: "Initializing payment gateway..."
+
+          - type: PrintAction
+            id: charge-card
+            props:
+              message: "Charging credit card..."
+
+          - type: CheckCondition
+            id: verify-payment
+            props:
+              key: payment.status
+              operator: "=="
+              value: "success"
+
+  # Step 3: Post-checkout tasks (parallel)
+  - type: Parallel
+    id: post-checkout-tasks
+    name: Post-Checkout Tasks
+    props:
+      strategy: strict
+    children:
+      - type: Sequence
+        id: order-confirmation
+        children:
+          - type: PrintAction
+            id: send-confirmation-email
+            props:
+              message: "Sending order confirmation email..."
+
+          - type: PrintAction
+            id: send-sms
+            props:
+              message: "Sending SMS notification..."
+
+      - type: PrintAction
+        id: update-inventory
+        props:
+          message: "Updating inventory levels..."
+
+      - type: PrintAction
+        id: create-shipment
+        props:
+          message: "Creating shipment record..."
+
+  # Step 4: Completion
+  - type: PrintAction
+    id: checkout-complete
+    props:
+      message: "Checkout completed successfully!"

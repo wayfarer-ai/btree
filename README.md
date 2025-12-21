@@ -5,11 +5,12 @@ Core behavior tree implementation for TypeScript, designed for AI-native workflo
 ## Features
 
 - ✅ **22 Production-Ready Nodes**: 11 composites + 10 decorators + 1 scripting node for comprehensive control flow
+- ✅ **YAML Workflows**: Declarative workflow definitions with 4-stage validation pipeline and Zod schemas
 - ✅ **Temporal Workflows**: Native integration with Temporal for durable, resumable workflow execution
 - ✅ **Hierarchical Blackboard**: Scoped data storage with inheritance and deep cloning
 - ✅ **Event System**: Observable node lifecycle events for real-time monitoring
 - ✅ **Smart Execution Snapshots**: Capture-on-change with diffs & execution traces for efficient debugging
-- ✅ **Type-Safe**: Strongly typed TypeScript with **520 tests passing** (89%+ coverage)
+- ✅ **Type-Safe**: Strongly typed TypeScript with **534 tests passing** (89%+ coverage)
 
 ## Installation
 
@@ -18,6 +19,8 @@ npm install @wayfarer-ai/btree
 ```
 
 ## Quick Start
+
+### Programmatic API
 
 ```typescript
 import {
@@ -40,6 +43,150 @@ const engine = new TickEngine(sequence);
 await engine.tick(blackboard);
 ```
 
+### YAML Workflows (Recommended)
+
+```typescript
+import { Registry, registerStandardNodes, loadTreeFromYaml } from '@wayfarer-ai/btree';
+
+// Setup registry with all built-in nodes
+const registry = new Registry();
+registerStandardNodes(registry);  // Registers all 32 built-in nodes!
+
+// Add your custom nodes
+registry.register('MyCustomAction', MyCustomAction, { category: 'action' });
+
+// Load from YAML
+const tree = loadTreeFromYaml(`
+type: Sequence
+id: my-workflow
+children:
+  - type: PrintAction
+    id: hello
+    props:
+      message: "Hello from YAML!"
+  - type: MyCustomAction
+    id: custom
+`, registry);
+
+// Execute
+await tree.execute();
+```
+
+## YAML Workflows
+
+Define behavior trees declaratively using YAML with comprehensive validation:
+
+```yaml
+type: Sequence
+id: user-onboarding
+name: User Onboarding Flow
+
+children:
+  - type: PrintAction
+    id: welcome
+    props:
+      message: "Welcome to our platform!"
+
+  - type: Timeout
+    id: profile-timeout
+    props:
+      timeoutMs: 30000
+    children:
+      - type: Sequence
+        id: profile-setup
+        children:
+          - type: PrintAction
+            id: request-info
+            props:
+              message: "Please complete your profile..."
+
+          - type: Delay
+            id: wait
+            props:
+              delayMs: 1000
+            children:
+              - type: PrintAction
+                id: processing
+                props:
+                  message: "Processing..."
+```
+
+### Loading YAML Workflows
+
+```typescript
+import {
+  Registry,
+  registerStandardNodes,
+  loadTreeFromYaml,
+  loadTreeFromFile
+} from '@wayfarer-ai/btree';
+
+// Setup registry with all 32 built-in nodes
+const registry = new Registry();
+registerStandardNodes(registry);  // One line instead of 32!
+
+// Optionally register your custom nodes
+registry.register('MyCustomAction', MyCustomAction, { category: 'action' });
+
+// Load from string
+const yamlString = `
+type: Sequence
+id: my-workflow
+children:
+  - type: PrintAction
+    id: hello
+    props:
+      message: "Hello from YAML!"
+`;
+
+const tree = loadTreeFromYaml(yamlString, registry);
+
+// Load from file
+const tree = await loadTreeFromFile('./workflows/onboarding.yaml', registry);
+
+// Execute like any other tree
+const result = await tree.execute();
+```
+
+**Built-in nodes** (automatically registered by `registerStandardNodes()`):
+- **10 Composites**: Sequence, Selector, Parallel, ForEach, While, Conditional, ReactiveSequence, MemorySequence, Recovery, SubTree
+- **10 Decorators**: Timeout, Delay, Repeat, Invert, ForceSuccess, ForceFailure, RunOnce, KeepRunningUntilFailure, Precondition, SoftAssert
+- **9 Actions/Conditions**: PrintAction, MockAction, CounterAction, CheckCondition, AlwaysCondition, WaitAction, Script, LogMessage, RegexExtract
+- **3 Test Nodes**: SuccessNode, FailureNode, RunningNode
+
+### 4-Stage Validation Pipeline
+
+YAML workflows undergo comprehensive validation before execution:
+
+1. **YAML Syntax** - Validates well-formed YAML (indentation, structure)
+2. **Tree Structure** - Ensures required fields (`type`, `id`) and correct data types
+3. **Node Configuration** - Validates node-specific properties using Zod schemas
+4. **Semantic Rules** - Checks ID uniqueness, child counts, circular references
+
+```typescript
+import { validateYaml } from '@wayfarer-ai/btree';
+
+// Validate without executing
+const result = validateYaml(yamlString, registry);
+
+if (!result.valid) {
+  result.errors.forEach(error => {
+    console.error(error.format());
+    // Example output:
+    // "root.children[2].props.timeoutMs: Number must be greater than 0
+    //  Suggestion: Use a positive timeout value in milliseconds"
+  });
+}
+```
+
+**Benefits:**
+- **Declarative**: Define workflows in YAML instead of TypeScript
+- **Validated**: Comprehensive validation with helpful error messages
+- **Type-Safe**: Runtime validation using Zod schemas
+- **AI-Friendly**: Easy for LLMs to generate and modify workflows
+
+See [YAML Specification](./docs/yaml-specification.md) for complete reference with examples for all 22 node types.
+
 ## Node Types
 
 ### Core Composites (11)
@@ -56,11 +203,10 @@ await engine.tick(blackboard);
 | `While` | Loop until false | Polling & waiting |
 | `Recovery` | Try-catch-finally | Error handling |
 
-### Advanced Decorators (7)
+### Advanced Decorators (6)
 | Node | Purpose | Use Case |
 |------|---------|----------|
 | `Invert` | Flip result | Negate conditions |
-| `Retry` | Retry on failure | Flaky operations |
 | `Timeout` | Time limit | Prevent hangs |
 | `Delay` | Add delay | Rate limiting |
 | `Repeat` | Execute N times | Loops |
@@ -69,6 +215,8 @@ await engine.tick(blackboard);
 | `KeepRunningUntilFailure` | Loop while success | Pagination |
 | `Precondition` | Check prerequisites | Validation |
 | `SoftAssert` | Non-critical checks | Continue on failure |
+
+> **Note**: For retry functionality in Temporal workflows, use [Temporal's native RetryPolicy](https://docs.temporal.io/develop/typescript/failure-detection#retry-policy) instead of a decorator.
 
 ### Scripting Node (1)
 | Node | Purpose | Use Case |
@@ -335,25 +483,103 @@ console.log(context.blackboard.get('apiUrl'));
 
 ### 🌊 Temporal Workflows
 
-Behavior trees can run as **Temporal workflows** for durable, fault-tolerant execution with native resumability:
+Behavior trees can run as **Temporal workflows** for durable, fault-tolerant execution with native resumability.
+
+#### YAML Workflows in Temporal (Recommended)
+
+Define workflows in YAML and execute them in Temporal:
+
+```typescript
+// yaml-workflow-loader.ts
+import {
+  BehaviorTree,
+  Registry,
+  registerStandardNodes,
+  loadTreeFromYaml,
+  type WorkflowArgs,
+  type WorkflowResult,
+} from '@wayfarer-ai/btree';
+
+export interface YamlWorkflowArgs extends WorkflowArgs {
+  yamlContent: string;
+}
+
+export async function yamlWorkflow(args: YamlWorkflowArgs): Promise<WorkflowResult> {
+  // Setup registry with all built-in nodes
+  const registry = new Registry();
+  registerStandardNodes(registry);
+
+  // Register custom nodes here
+  // registry.register('MyCustomNode', MyCustomNode, { category: 'action' });
+
+  // Parse YAML and execute
+  const root = loadTreeFromYaml(args.yamlContent, registry);
+  const tree = new BehaviorTree(root);
+  return tree.toWorkflow()(args);
+}
+```
+
+**Client usage:**
+
+```typescript
+import { readFileSync } from 'fs';
+
+// Load YAML file (client-side, not in workflow sandbox)
+const yamlContent = readFileSync('./workflows/order-processing.yaml', 'utf-8');
+
+// Execute as Temporal workflow
+const result = await client.workflow.execute('yamlWorkflow', {
+  taskQueue: 'btree-workflows',
+  workflowId: `order-${Date.now()}`,
+  args: [{
+    input: {},
+    treeRegistry: new Registry(),
+    yamlContent  // Pass YAML content to workflow
+  }]
+});
+```
+
+**Example YAML workflow:**
+
+```yaml
+type: Sequence
+id: order-processing
+name: Order Processing Workflow
+
+children:
+  - type: Timeout
+    id: validation-timeout
+    props:
+      timeoutMs: 5000
+    children:
+      - type: Parallel
+        id: validation-checks
+        props:
+          strategy: "strict"
+        children:
+          - type: PrintAction
+            id: validate-inventory
+            props:
+              message: "✓ Validating inventory..."
+          - type: PrintAction
+            id: validate-payment
+            props:
+              message: "✓ Validating payment..."
+```
+
+#### Programmatic Workflows
 
 ```typescript
 import { BehaviorTree, Sequence, PrintAction } from '@wayfarer-ai/btree';
 import type { WorkflowArgs, WorkflowResult } from '@wayfarer-ai/btree';
 
-// Define workflow
 export async function myWorkflow(args: WorkflowArgs): Promise<WorkflowResult> {
-  // Build behavior tree
   const root = new Sequence({ id: 'root' });
   root.addChild(new PrintAction({ id: 'step1', message: 'Hello' }));
   root.addChild(new PrintAction({ id: 'step2', message: 'World' }));
 
-  // Convert to Temporal workflow
   const tree = new BehaviorTree(root);
-  const workflow = tree.toWorkflow();
-
-  // Execute
-  return workflow(args);
+  return tree.toWorkflow()(args);
 }
 ```
 
@@ -361,12 +587,12 @@ export async function myWorkflow(args: WorkflowArgs): Promise<WorkflowResult> {
 - **Automatic Resumability**: Workflows resume automatically after failures through event sourcing and deterministic replay
 - **Durable Execution**: Workflow state persists across process crashes and restarts
 - **Long-Running Workflows**: Run for days, weeks, or months without state loss
-- **Built-in Retries**: Activities can retry with exponential backoff
+- **Built-in Retries**: Use Temporal's RetryPolicy for activities (no custom retry decorators needed)
 - **Observability**: Full execution history and timeline in Temporal UI
 
 **No Manual Resume Needed**: Unlike standalone execution, Temporal handles all resumability automatically. If a workflow crashes or times out, Temporal replays the event history and resumes from the exact point of failure.
 
-See [`examples/temporal/`](./examples/temporal/) for complete Temporal integration examples.
+See [`examples/temporal/`](./examples/temporal/) and [`examples/yaml-workflows/`](./examples/yaml-workflows/) for complete examples.
 
 ### 📡 Event System
 
@@ -521,7 +747,7 @@ npm run test:watch      # Watch mode
 npm run test:ui         # UI mode
 ```
 
-Current status: **520 tests passing** across 35 test files with **89%+ coverage**
+Current status: **534 tests passing** across 36 test files with **89%+ coverage**
 
 ### Building
 ```bash
@@ -578,7 +804,6 @@ src/
 │   └── recovery.ts          # ✨ NEW
 ├── decorators/               # Decorator nodes
 │   ├── invert.ts
-│   ├── retry.ts
 │   ├── timeout.ts
 │   ├── delay.ts
 │   ├── force-result.ts      # ✨ NEW

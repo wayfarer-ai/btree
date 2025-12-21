@@ -31,22 +31,35 @@ Temporal provides **automatic resumability** through event sourcing and determin
 
 ## Workflow Examples
 
-### 01-simple-sequence.ts
+All workflows are now defined in YAML for better readability and AI-friendliness. The workflows are located in `examples/yaml-workflows/`:
+
+### 01-simple-sequence.yaml
 Basic sequence of actions demonstrating fundamental workflow execution.
+- 3 sequential print actions
+- Simplest possible workflow pattern
 
-### 02-parallel-timeout.ts
+### 02-parallel-timeout.yaml
 Parallel task execution with timeout protection.
+- 3 tasks running concurrently
+- 5-second timeout wrapper
+- Demonstrates strict parallel strategy (all must succeed)
 
-### 03-retry-backoff.ts
-Retry logic with delays, demonstrating resilient workflows.
+### 06-temporal-demo.yaml
+**Complex e-commerce order processing workflow:**
+- **Phase 1**: Parallel validation (inventory, payment, shipping)
+- **Phase 2**: Payment processing with 1s simulated delay
+- **Phase 3**: Parallel fulfillment (inventory, shipping, email)
+- Demonstrates: Sequence, Parallel, Timeout, Delay nodes
+- Realistic production workflow pattern
 
-### 04-complex-workflow.ts
-Complex nested behavior tree showcasing:
-- Nested sequences and selectors
-- Parallel execution
-- Retry logic
-- Timeouts and delays
-- Blackboard data flow between nodes
+### Legacy Programmatic Workflows (Deprecated)
+
+The following TypeScript workflows have been converted to YAML:
+- ~~01-simple-sequence.ts~~ → `01-simple-sequence.yaml`
+- ~~02-parallel-timeout.ts~~ → `02-parallel-timeout.yaml`
+- ~~05-yaml-workflow.ts~~ → Replaced by universal `yaml-workflow-loader.ts`
+- ~~03-retry-backoff.ts~~ → Deprecated (use Temporal RetryPolicy)
+- ~~04-complex-workflow.ts~~ → Deprecated (use Temporal RetryPolicy)
 
 ## Running the Examples
 
@@ -86,24 +99,98 @@ Open http://localhost:8233 in your browser to see:
 
 ## Workflow Structure
 
-All workflows follow this pattern:
+All workflows are defined in YAML and loaded via the universal `yamlWorkflow` loader.
+
+### YAML Workflow Format
+
+```yaml
+type: Sequence
+id: my-workflow
+name: My Workflow
+children:
+  - type: PrintAction
+    id: start
+    props:
+      message: "Starting..."
+
+  - type: Timeout
+    id: timeout-wrapper
+    props:
+      timeoutMs: 10000
+    children:
+      - type: Parallel
+        id: parallel-tasks
+        props:
+          strategy: "strict"
+        children:
+          - type: PrintAction
+            id: task1
+            props:
+              message: "Task 1"
+          - type: PrintAction
+            id: task2
+            props:
+              message: "Task 2"
+```
+
+### Universal YAML Workflow Loader
+
+The `yamlWorkflow` function loads any YAML workflow:
 
 ```typescript
-import { BehaviorTree, ... } from "@wayfarer-ai/btree";
+// yaml-workflow-loader.ts
+import { registerStandardNodes } from '@wayfarer-ai/btree';
 
-export async function myWorkflow(args: WorkflowArgs): Promise<WorkflowResult> {
-  // 1. Build behavior tree
-  const root = new Sequence({ id: "root" });
-  root.addChild(...);
+export async function yamlWorkflow(args: YamlWorkflowArgs): Promise<WorkflowResult> {
+  // 1. Setup registry with all built-in nodes
+  const registry = new Registry();
+  registerStandardNodes(registry);
 
-  // 2. Convert to workflow
+  // Optionally register custom nodes:
+  // registry.register("MyCustomNode", MyCustomNode, { category: "action" });
+
+  // 2. Parse YAML from workflow args
+  const root = loadTreeFromYaml(args.yamlContent, registry);
+
+  // 3. Convert to Temporal workflow and execute
   const tree = new BehaviorTree(root);
-  const workflow = tree.toWorkflow();
-
-  // 3. Execute
-  return workflow(args);
+  return tree.toWorkflow()(args);
 }
 ```
+
+**`registerStandardNodes()` includes:**
+- **Composites**: Sequence, Selector, Parallel, Conditional, ForEach, While, Recovery, ReactiveSequence, MemorySequence, SubTree
+- **Decorators**: Timeout, Delay, Repeat, Invert, ForceSuccess, ForceFailure, RunOnce, KeepRunningUntilFailure, Precondition, SoftAssert
+- **Actions/Conditions**: PrintAction, MockAction, CounterAction, CheckCondition, AlwaysCondition, WaitAction, Script, LogMessage, RegexExtract
+- **Test Nodes**: SuccessNode, FailureNode, RunningNode
+
+### Client Usage
+
+Load YAML files and pass content as workflow arguments:
+
+```typescript
+// client.ts
+const yamlContent = readFileSync('./my-workflow.yaml', 'utf-8');
+
+const result = await client.workflow.execute("yamlWorkflow", {
+  taskQueue: "btree-workflows",
+  workflowId: `my-workflow-${Date.now()}`,
+  args: [{
+    input: {},
+    treeRegistry: new Registry(),
+    yamlContent  // Pass YAML content to workflow
+  }]
+});
+```
+
+**Benefits:**
+- ✅ Single universal loader for all workflows
+- ✅ YAML files are version controlled
+- ✅ Client loads files (no filesystem access in Temporal sandbox)
+- ✅ Easy to add new workflows without code changes
+- ✅ AI-friendly declarative format
+
+See [`yaml-workflow-loader.ts`](./yaml-workflow-loader.ts) for the complete implementation.
 
 ## Production Best Practices
 
@@ -157,6 +244,72 @@ export async function myWorkflow(args: WorkflowArgs) {
   return tree.toWorkflow()(args);
 }
 ```
+
+## Migration Guide: Retry Decorator Removed
+
+The `Retry` decorator has been removed from the library. Use Temporal's native **RetryPolicy** instead, which provides deterministic, server-managed retries.
+
+### Before (Retry Decorator - Removed)
+```typescript
+import { RetryUntilSuccessful } from "@wayfarer-ai/btree";
+
+const retry = new RetryUntilSuccessful({
+  id: "retry",
+  maxAttempts: 3,
+  retryDelay: 1000
+});
+retry.setChild(new FlakeyAction());
+```
+
+### After (Temporal RetryPolicy - Recommended)
+
+**Option 1: Use Temporal Activities with RetryPolicy** (Best for external operations)
+```typescript
+import { proxyActivities } from '@temporalio/workflow';
+
+const activities = proxyActivities({
+  startToCloseTimeout: '1 minute',
+  retry: {
+    initialInterval: '1s',      // First retry after 1 second
+    backoffCoefficient: 2.0,    // Double delay each retry
+    maximumInterval: '60s',     // Max delay between retries
+    maximumAttempts: 3,         // Try up to 3 times
+  }
+});
+
+// Call activity - Temporal handles retries automatically
+const result = await activities.flakeyOperation();
+```
+
+**Option 2: Manual Retry with Temporal Sleep** (For workflow-level logic)
+```typescript
+import { sleep } from '@temporalio/workflow';
+
+let attempt = 0;
+let result;
+
+while (attempt < 3) {
+  try {
+    result = await someOperation();
+    break; // Success - exit loop
+  } catch (error) {
+    attempt++;
+    if (attempt >= 3) throw error; // Max attempts reached
+    await sleep(`${1000 * Math.pow(2, attempt)}ms`); // Exponential backoff
+  }
+}
+```
+
+### Why This Change?
+
+- **Deterministic**: Temporal's RetryPolicy respects replay boundaries
+- **Server-Managed**: Retries are enforced by Temporal server, not client code
+- **Better Observability**: Retry attempts visible in Temporal UI
+- **Less Code**: No need for custom retry decorators
+
+### Updating Example Workflows
+
+> **Note**: The example files `03-retry-backoff.ts` and `04-complex-workflow.ts` still reference the removed `Retry` decorator and will not run. These examples are preserved for reference but should be updated to use Temporal's RetryPolicy as shown above.
 
 ## Next Steps
 
