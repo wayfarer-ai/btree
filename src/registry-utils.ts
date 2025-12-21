@@ -1,0 +1,129 @@
+/**
+ * Registry utilities for registering standard nodes
+ */
+
+import type { Registry } from "./registry.js";
+
+// Composites
+import { Sequence } from "./composites/sequence.js";
+import { Selector } from "./composites/selector.js";
+import { Parallel } from "./composites/parallel.js";
+import { Conditional } from "./composites/conditional.js";
+import { ForEach } from "./composites/for-each.js";
+import { While } from "./composites/while.js";
+import { Recovery } from "./composites/recovery.js";
+import { ReactiveSequence } from "./composites/reactive-sequence.js";
+import { MemorySequence } from "./composites/memory-sequence.js";
+import { SubTree } from "./composites/sub-tree.js";
+
+// Decorators
+import { Timeout } from "./decorators/timeout.js";
+import { Delay } from "./decorators/delay.js";
+import { Repeat } from "./decorators/repeat.js";
+import { Invert } from "./decorators/invert.js";
+import { ForceSuccess, ForceFailure } from "./decorators/force-result.js";
+import { RunOnce } from "./decorators/run-once.js";
+import { KeepRunningUntilFailure } from "./decorators/keep-running.js";
+import { Precondition } from "./decorators/precondition.js";
+import { SoftAssert } from "./decorators/soft-assert.js";
+
+// Test nodes (commonly used in examples and testing)
+import {
+  PrintAction,
+  MockAction,
+  SuccessNode,
+  FailureNode,
+  RunningNode,
+  CounterAction,
+  CheckCondition,
+  AlwaysCondition,
+  WaitAction,
+} from "./test-nodes.js";
+
+// Scripting
+import { Script } from "./scripting/script-node.js";
+
+// Utilities
+import { LogMessage } from "./utilities/log-message.js";
+import { RegexExtract } from "./utilities/regex-extract.js";
+
+/**
+ * Register all standard built-in nodes to a registry
+ * This includes composites, decorators, actions, conditions, and utilities
+ *
+ * @param registry - Registry to register nodes to
+ *
+ * @example
+ * ```typescript
+ * import { Registry, registerStandardNodes } from '@wayfarer-ai/btree';
+ *
+ * const registry = new Registry();
+ * registerStandardNodes(registry);
+ *
+ * // Now register your custom nodes
+ * registry.register('MyCustomAction', MyCustomAction, { category: 'action' });
+ * ```
+ */
+export function registerStandardNodes(registry: Registry): void {
+  // Composites
+  registry.register("Sequence", Sequence as any, { category: "composite" });
+  registry.register("Selector", Selector as any, { category: "composite" });
+  registry.register("Parallel", Parallel as any, { category: "composite" });
+  registry.register("Conditional", Conditional as any, {
+    category: "composite",
+  });
+  registry.register("ForEach", ForEach as any, { category: "composite" });
+  registry.register("While", While as any, { category: "composite" });
+  registry.register("Recovery", Recovery as any, { category: "composite" });
+  registry.register("ReactiveSequence", ReactiveSequence as any, {
+    category: "composite",
+  });
+  registry.register("MemorySequence", MemorySequence as any, {
+    category: "composite",
+  });
+  registry.register("SubTree", SubTree as any, { category: "composite" });
+
+  // Decorators
+  registry.register("Timeout", Timeout as any, { category: "decorator" });
+  registry.register("Delay", Delay as any, { category: "decorator" });
+  registry.register("Repeat", Repeat as any, { category: "decorator" });
+  registry.register("Invert", Invert as any, { category: "decorator" });
+  registry.register("ForceSuccess", ForceSuccess as any, {
+    category: "decorator",
+  });
+  registry.register("ForceFailure", ForceFailure as any, {
+    category: "decorator",
+  });
+  registry.register("RunOnce", RunOnce as any, { category: "decorator" });
+  registry.register("KeepRunningUntilFailure", KeepRunningUntilFailure as any, {
+    category: "decorator",
+  });
+  registry.register("Precondition", Precondition as any, {
+    category: "decorator",
+  });
+  registry.register("SoftAssert", SoftAssert as any, { category: "decorator" });
+
+  // Test/Example nodes
+  registry.register("PrintAction", PrintAction as any, { category: "action" });
+  registry.register("MockAction", MockAction as any, { category: "action" });
+  registry.register("SuccessNode", SuccessNode as any, { category: "action" });
+  registry.register("FailureNode", FailureNode as any, { category: "action" });
+  registry.register("RunningNode", RunningNode as any, { category: "action" });
+  registry.register("CounterAction", CounterAction as any, {
+    category: "action",
+  });
+  registry.register("CheckCondition", CheckCondition as any, {
+    category: "condition",
+  });
+  registry.register("AlwaysCondition", AlwaysCondition as any, {
+    category: "condition",
+  });
+  registry.register("WaitAction", WaitAction as any, { category: "action" });
+
+  // Scripting
+  registry.register("Script", Script as any, { category: "action" });
+
+  // Utilities
+  registry.register("LogMessage", LogMessage as any, { category: "action" });
+  registry.register("RegexExtract", RegexExtract as any, { category: "action" });
+}

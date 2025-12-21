@@ -1,0 +1,25 @@
+# Simple Sequence Workflow
+# Demonstrates basic sequential execution in Temporal
+
+type: Sequence
+id: simple-sequence
+name: Simple Sequence Workflow
+
+children:
+  - type: PrintAction
+    id: step1
+    name: Start Step
+    props:
+      message: "Starting workflow..."
+
+  - type: PrintAction
+    id: step2
+    name: Process Step
+    props:
+      message: "Processing data..."
+
+  - type: PrintAction
+    id: step3
+    name: Complete Step
+    props:
+      message: "Workflow complete!"

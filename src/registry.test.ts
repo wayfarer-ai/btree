@@ -175,7 +175,7 @@ describe("Registry", () => {
 
       expect(() => {
         registry.createTree(definition);
-      }).toThrow("Node definition must have a type");
+      }).toThrow(/type/); // Zod validation error mentions "type" field
     });
 
     it("should generate id if not provided", () => {

@@ -1,0 +1,45 @@
+# Parallel Execution with Timeout
+# Demonstrates concurrent task execution with timeout protection
+
+type: Sequence
+id: parallel-timeout-root
+name: Parallel with Timeout Workflow
+
+children:
+  # Execute tasks in parallel with timeout protection
+  - type: Timeout
+    id: timeout
+    name: 5 Second Timeout
+    props:
+      timeoutMs: 5000
+    children:
+      - type: Parallel
+        id: parallelTasks
+        name: Parallel Tasks
+        props:
+          strategy: "strict"
+        children:
+          - type: PrintAction
+            id: task1
+            name: Task 1
+            props:
+              message: "Task 1: Fetching data..."
+
+          - type: PrintAction
+            id: task2
+            name: Task 2
+            props:
+              message: "Task 2: Processing..."
+
+          - type: PrintAction
+            id: task3
+            name: Task 3
+            props:
+              message: "Task 3: Validating..."
+
+  # Completion message
+  - type: PrintAction
+    id: complete
+    name: Completion Message
+    props:
+      message: "All tasks completed successfully!"

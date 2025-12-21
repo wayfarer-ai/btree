@@ -1,0 +1,146 @@
+# Temporal Workflow Demo
+# E-commerce order processing with parallel operations and timeouts
+
+type: Sequence
+id: order-processing
+name: Order Processing Workflow
+
+children:
+  # Step 1: Initialize order
+  - type: PrintAction
+    id: start
+    name: Start Order Processing
+    props:
+      message: "=== Starting Order Processing ==="
+
+  # Step 2: Validate order in parallel with timeout
+  - type: PrintAction
+    id: validation-phase
+    props:
+      message: "=== Phase 1: Validation ==="
+
+  - type: Timeout
+    id: validation-timeout
+    name: Validation Timeout (5s)
+    props:
+      timeoutMs: 5000
+    children:
+      - type: Parallel
+        id: validation-checks
+        name: Run Validation Checks
+        props:
+          strategy: "strict"
+        children:
+          - type: PrintAction
+            id: validate-inventory
+            props:
+              message: "✓ Validating inventory availability..."
+
+          - type: PrintAction
+            id: validate-payment
+            props:
+              message: "✓ Validating payment method..."
+
+          - type: PrintAction
+            id: validate-shipping
+            props:
+              message: "✓ Validating shipping address..."
+
+  # Step 3: Process payment
+  - type: PrintAction
+    id: payment-phase
+    props:
+      message: "=== Phase 2: Payment Processing ==="
+
+  - type: Timeout
+    id: payment-timeout
+    name: Payment Timeout (10s)
+    props:
+      timeoutMs: 10000
+    children:
+      - type: Sequence
+        id: payment-sequence
+        children:
+          - type: PrintAction
+            id: charge-card
+            props:
+              message: "💳 Processing payment..."
+
+          - type: Delay
+            id: payment-delay
+            name: Simulate Payment Processing
+            props:
+              delayMs: 1000
+            children:
+              - type: PrintAction
+                id: payment-success
+                props:
+                  message: "✓ Payment processed successfully!"
+
+  # Step 4: Fulfill order in parallel
+  - type: PrintAction
+    id: fulfillment-phase
+    props:
+      message: "=== Phase 3: Order Fulfillment ==="
+
+  - type: Parallel
+    id: fulfillment-tasks
+    name: Parallel Fulfillment
+    props:
+      strategy: "strict"
+    children:
+      - type: Sequence
+        id: inventory-update
+        name: Update Inventory
+        children:
+          - type: PrintAction
+            id: reserve-items
+            props:
+              message: "📦 Reserving items from inventory..."
+
+          - type: Delay
+            id: inventory-delay
+            props:
+              delayMs: 500
+            children:
+              - type: PrintAction
+                id: inventory-complete
+                props:
+                  message: "✓ Inventory updated"
+
+      - type: Sequence
+        id: shipping-label
+        name: Generate Shipping Label
+        children:
+          - type: PrintAction
+            id: create-label
+            props:
+              message: "🏷️  Generating shipping label..."
+
+          - type: Delay
+            id: shipping-delay
+            props:
+              delayMs: 500
+            children:
+              - type: PrintAction
+                id: label-complete
+                props:
+                  message: "✓ Shipping label created"
+
+      - type: PrintAction
+        id: send-confirmation
+        name: Send Confirmation Email
+        props:
+          message: "📧 Sending order confirmation email..."
+
+  # Step 5: Complete
+  - type: PrintAction
+    id: completion
+    props:
+      message: "=== Order Processing Complete ==="
+
+  - type: PrintAction
+    id: success
+    name: Success Message
+    props:
+      message: "✅ Order #12345 processed successfully!"

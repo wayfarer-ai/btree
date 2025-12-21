@@ -10,7 +10,6 @@ import { Sequence } from "./composites/sequence.js";
 import { Selector } from "./composites/selector.js";
 import { Parallel, ParallelStrategy } from "./composites/parallel.js";
 import { PrintAction, MockAction, CounterAction } from "./test-nodes.js";
-import { RetryUntilSuccessful } from "./decorators/retry.js";
 import { Timeout } from "./decorators/timeout.js";
 import { Delay } from "./decorators/delay.js";
 import { NodeStatus } from "./types.js";
@@ -94,41 +93,7 @@ describe.skip("Temporal Integration", () => {
     expect(result.output.count).toBe(18); // 10 + 5 + 3
   });
 
-  it("should handle retry decorator", async () => {
-    let attempt = 0;
-    const failTwice = new MockAction({
-      id: "failTwice",
-      returnStatus: NodeStatus.FAILURE,
-      ticksBeforeComplete: 1,
-    });
-
-    // Override tick to fail twice then succeed
-    const originalTick = failTwice.tick.bind(failTwice);
-    failTwice.tick = async (context) => {
-      attempt++;
-      if (attempt <= 2) {
-        failTwice._status = NodeStatus.FAILURE;
-        return NodeStatus.FAILURE;
-      }
-      return originalTick(context);
-    };
-
-    const retry = new RetryUntilSuccessful({
-      id: "retry",
-      maxAttempts: 3,
-      retryDelay: 0,
-    });
-    retry.setChild(failTwice);
-
-    const tree = new BehaviorTree(retry);
-    const workflow = tree.toWorkflow();
-
-    const treeRegistry = new Registry();
-    const result = await workflow({ input: {}, treeRegistry });
-
-    expect(result.status).toBe(NodeStatus.SUCCESS);
-    expect(attempt).toBe(3);
-  });
+  // NOTE: Retry decorator removed - use Temporal's native RetryPolicy instead
 
   it("should handle timeout decorator", async () => {
     const timeout = new Timeout({
@@ -175,7 +140,7 @@ describe.skip("Temporal Integration", () => {
   });
 
   it("should handle complex nested trees", async () => {
-    // Create a complex tree: Sequence -> (Selector, Parallel, Retry(Action))
+    // Create a complex tree: Sequence -> (Selector, Parallel, Action)
     const root = new Sequence({ id: "root" });
 
     const selector = new Selector({ id: "selector" });
@@ -190,14 +155,9 @@ describe.skip("Temporal Integration", () => {
     parallel.addChild(new PrintAction({ id: "p1", message: "Parallel 1" }));
     parallel.addChild(new PrintAction({ id: "p2", message: "Parallel 2" }));
 
-    const retry = new RetryUntilSuccessful({
-      id: "retry",
-      maxAttempts: 2,
-      retryDelay: 0,
-    });
-    retry.setChild(new MockAction({ id: "retryAction", returnStatus: NodeStatus.SUCCESS }));
+    const action = new MockAction({ id: "finalAction", returnStatus: NodeStatus.SUCCESS });
 
-    root.addChildren([selector, parallel, retry]);
+    root.addChildren([selector, parallel, action]);
 
     const tree = new BehaviorTree(root);
     const workflow = tree.toWorkflow();

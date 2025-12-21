@@ -10,6 +10,13 @@ import type {
   NodeMetadata,
   TreeNode,
 } from "./types.js";
+import { z } from "zod";
+import {
+  schemaRegistry,
+  validateConfiguration,
+  treeDefinitionSchema,
+  type TreeDefinition,
+} from "./schemas/index.js";
 
 /**
  * Entry for a registered BehaviorTree with metadata
@@ -56,6 +63,7 @@ export class Registry {
 
   /**
    * Create a node instance by type
+   * Validates configuration against schema before creating node
    */
   create(type: string, config: NodeConfiguration): TreeNode {
     const Constructor = this.nodeTypes.get(type);
@@ -66,8 +74,16 @@ export class Registry {
       );
     }
 
-    this.log(`Creating node of type: ${type} with id: ${config.id}`);
-    return new Constructor(config);
+    // Validate configuration using schema registry
+    const validatedConfig = validateConfiguration<NodeConfiguration>(
+      schemaRegistry.getSchema(type) as z.ZodSchema<NodeConfiguration>,
+      config,
+      type,
+      config.id,
+    );
+
+    this.log(`Creating node of type: ${type} with id: ${validatedConfig.id}`);
+    return new Constructor(validatedConfig);
   }
 
   /**
@@ -228,61 +244,44 @@ export class Registry {
 
   /**
    * Create a tree from a JSON definition
+   * Validates tree structure before creating nodes
    */
-  createTree(definition: {
-    type: string;
-    id?: string;
-    name?: string;
-    props?: Record<string, unknown>;
-    children?: unknown[];
-  }): TreeNode {
-    if (!definition.type) {
+  createTree(definition: unknown): TreeNode {
+    // Validate tree definition structure
+    const validatedDef = treeDefinitionSchema.parse(definition) as TreeDefinition;
+
+    if (!validatedDef.type) {
       throw new Error("Node definition must have a type");
     }
 
-    // Create the node
+    // Create the node configuration
     const config: NodeConfiguration = {
-      id: definition.id || `${definition.type}_${Date.now()}`,
-      name: definition.name || definition.id,
-      ...definition.props,
+      id: validatedDef.id || `${validatedDef.type}_${Date.now()}`,
+      name: validatedDef.name || validatedDef.id,
+      ...validatedDef.props,
     };
 
-    const node = this.create(definition.type, config);
+    // Create node with validated configuration (uses schema validation)
+    const node = this.create(validatedDef.type, config);
 
     // Handle children for composite/decorator nodes
-    if (definition.children && Array.isArray(definition.children)) {
+    if (validatedDef.children && Array.isArray(validatedDef.children)) {
       if ("setChild" in node && typeof node.setChild === "function") {
         // Decorator node - single child
-        if (definition.children.length !== 1) {
+        if (validatedDef.children.length !== 1) {
           throw new Error(
-            `Decorator ${definition.type} must have exactly one child`,
+            `Decorator ${validatedDef.type} must have exactly one child`,
           );
         }
-        const child = this.createTree(
-          definition.children[0] as {
-            type: string;
-            id?: string;
-            name?: string;
-            props?: Record<string, unknown>;
-            children?: unknown[];
-          },
-        );
+        const child = this.createTree(validatedDef.children[0]);
         (node as { setChild: (child: TreeNode) => void }).setChild(child);
       } else if (
         "addChildren" in node &&
         typeof node.addChildren === "function"
       ) {
         // Composite node - multiple children
-        const children = definition.children.map((childDef: unknown) =>
-          this.createTree(
-            childDef as {
-              type: string;
-              id?: string;
-              name?: string;
-              props?: Record<string, unknown>;
-              children?: unknown[];
-            },
-          ),
+        const children = validatedDef.children.map((childDef) =>
+          this.createTree(childDef),
         );
         (node as { addChildren: (children: TreeNode[]) => void }).addChildren(
           children,
@@ -291,6 +290,42 @@ export class Registry {
     }
 
     return node;
+  }
+
+  /**
+   * Safe tree creation that returns success/error result
+   * Useful for user-facing tools that need graceful error handling
+   *
+   * @param definition - Tree definition to create
+   * @returns Success result with tree or failure result with error
+   *
+   * @example
+   * ```typescript
+   * const result = registry.safeCreateTree({
+   *   type: 'Sequence',
+   *   id: 'root',
+   *   children: [...]
+   * });
+   *
+   * if (result.success) {
+   *   console.log('Tree created:', result.tree);
+   * } else {
+   *   console.error('Failed:', result.error.message);
+   * }
+   * ```
+   */
+  safeCreateTree(
+    definition: unknown,
+  ): { success: true; tree: TreeNode } | { success: false; error: Error } {
+    try {
+      const tree = this.createTree(definition);
+      return { success: true, tree };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
   }
 
   private log(message: string): void {

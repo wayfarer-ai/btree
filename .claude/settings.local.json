@@ -15,7 +15,10 @@
       "Bash(timeout 30 npm run test:*)",
       "Bash(timeout 10 npx tsx:*)",
       "Bash(npm run build:*)",
-      "Bash(npx tsx client.ts)"
+      "Bash(npx tsx client.ts)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)",
+      "Bash(npx tsx:*)"
     ]
   }
 }

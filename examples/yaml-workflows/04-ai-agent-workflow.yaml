@@ -1,0 +1,346 @@
+# AI Agent Decision Workflow
+# Complexity: Very High (UI-Very Hard, LLM-Easy!)
+# Use case: Multi-step AI agent with fallbacks, decision trees, and context management
+# This showcases LLM's strength in generating complex decision logic
+
+type: Sequence
+id: ai-agent-workflow
+name: AI Agent Task Execution
+
+children:
+  # Step 1: Initialize agent context
+  - type: Sequence
+    id: agent-initialization
+    name: Agent Initialization
+    children:
+      - type: PrintAction
+        id: load-agent
+        props:
+          message: "Initializing AI agent..."
+
+      - type: CounterAction
+        id: init-retry-count
+        props:
+          key: agent.retryCount
+          increment: 0
+
+      - type: CounterAction
+        id: init-step-count
+        props:
+          key: agent.stepCount
+          increment: 0
+
+      - type: PrintAction
+        id: load-context
+        props:
+          message: "Loading conversation context..."
+
+  # Step 2: Task planning (decision tree)
+  - type: Selector
+    id: task-router
+    name: Task Type Router
+    children:
+      # Route 1: Code generation task
+      - type: Sequence
+        id: code-generation-path
+        children:
+          - type: CheckCondition
+            id: is-code-task
+            props:
+              key: task.type
+              operator: "=="
+              value: "code_generation"
+
+          - type: Sequence
+            id: code-gen-pipeline
+            name: Code Generation Pipeline
+            children:
+              - type: PrintAction
+                id: analyze-requirements
+                props:
+                  message: "Analyzing code requirements..."
+
+              - type: Timeout
+                id: generation-timeout
+                props:
+                  timeoutMs: 120000
+                children:
+                  - type: Sequence
+                    id: generate-code
+                    children:
+                      - type: PrintAction
+                        id: call-llm
+                        props:
+                          message: "Calling LLM for code generation..."
+
+                      - type: PrintAction
+                        id: validate-syntax
+                        props:
+                          message: "Validating syntax..."
+
+                      - type: CheckCondition
+                        id: check-quality
+                        props:
+                          key: code.qualityScore
+                          operator: ">"
+                          value: 0.7
+
+              - type: PrintAction
+                id: format-code
+                props:
+                  message: "Formatting generated code..."
+
+      # Route 2: Data analysis task
+      - type: Sequence
+        id: data-analysis-path
+        children:
+          - type: CheckCondition
+            id: is-analysis-task
+            props:
+              key: task.type
+              operator: "=="
+              value: "data_analysis"
+
+          - type: Recovery
+            id: analysis-with-recovery
+            children:
+              # Try: Complex analysis
+              - type: Parallel
+                id: parallel-analysis
+                props:
+                  strategy: strict
+                children:
+                  - type: PrintAction
+                    id: statistical-analysis
+                    props:
+                      message: "Running statistical analysis..."
+
+                  - type: PrintAction
+                    id: pattern-detection
+                    props:
+                      message: "Detecting patterns..."
+
+                  - type: PrintAction
+                    id: anomaly-detection
+                    props:
+                      message: "Detecting anomalies..."
+
+              # Catch: Simplified analysis
+              - type: PrintAction
+                id: fallback-analysis
+                props:
+                  message: "Running simplified analysis due to error..."
+
+              # Finally: Save results
+              - type: PrintAction
+                id: save-analysis
+                props:
+                  message: "Saving analysis results..."
+
+      # Route 3: Research task (default)
+      - type: Sequence
+        id: research-path
+        name: Research & Information Gathering
+        children:
+          - type: PrintAction
+            id: default-route
+            props:
+              message: "Executing research task..."
+
+          - type: While
+            id: research-loop
+            props:
+              condition:
+                key: agent.stepCount
+                operator: "<"
+                value: 5
+            children:
+              - type: Sequence
+                id: research-step
+                children:
+                  - type: CounterAction
+                    id: increment-step
+                    props:
+                      key: agent.stepCount
+                      increment: 1
+
+                  - type: Selector
+                    id: information-gathering
+                    name: Multi-Source Information Gathering
+                    children:
+                      # Try web search first
+                      - type: Sequence
+                        id: web-search
+                        children:
+                          - type: Timeout
+                            id: search-timeout
+                            props:
+                              timeoutMs: 10000
+                            children:
+                              - type: PrintAction
+                                id: execute-search
+                                props:
+                                  message: "Searching web for information..."
+
+                          - type: CheckCondition
+                            id: verify-results
+                            props:
+                              key: search.resultsCount
+                              operator: ">"
+                              value: 0
+
+                      # Fallback to knowledge base
+                      - type: Sequence
+                        id: knowledge-base-lookup
+                        children:
+                          - type: PrintAction
+                            id: query-kb
+                            props:
+                              message: "Querying internal knowledge base..."
+
+                          - type: ForceSuccess
+                            id: ensure-progress
+                            children:
+                              - type: PrintAction
+                                id: use-cached
+                                props:
+                                  message: "Using cached knowledge..."
+
+                  - type: PrintAction
+                    id: synthesize-info
+                    props:
+                      message: "Synthesizing information from step {{agent.stepCount}}..."
+
+                  - type: Delay
+                    id: rate-limit
+                    props:
+                      delayMs: 1000
+
+  # Step 3: Quality assurance (parallel checks)
+  - type: Parallel
+    id: quality-checks
+    name: Quality Assurance
+    props:
+      strategy: strict
+    children:
+      - type: Sequence
+        id: accuracy-check
+        children:
+          - type: PrintAction
+            id: verify-accuracy
+            props:
+              message: "Verifying accuracy of results..."
+
+          - type: SoftAssert
+            id: soft-accuracy-check
+            children:
+              - type: CheckCondition
+                id: accuracy-threshold
+                props:
+                  key: result.accuracy
+                  operator: ">"
+                  value: 0.8
+
+      - type: Sequence
+        id: completeness-check
+        children:
+          - type: PrintAction
+            id: verify-completeness
+            props:
+              message: "Checking completeness of response..."
+
+          - type: CheckCondition
+            id: completeness-threshold
+            props:
+              key: result.completeness
+              operator: ">"
+              value: 0.7
+
+      - type: Sequence
+        id: safety-check
+        children:
+          - type: PrintAction
+            id: run-safety-filters
+            props:
+              message: "Running safety and content filters..."
+
+          - type: CheckCondition
+            id: safety-passed
+            props:
+              key: result.safetyScore
+              operator: ">"
+              value: 0.9
+
+  # Step 4: Response formatting with retry
+  - type: Timeout
+    id: formatting-timeout
+    props:
+      timeoutMs: 30000
+    children:
+      - type: Sequence
+        id: format-response
+        children:
+          - type: PrintAction
+            id: structure-response
+            props:
+              message: "Structuring response..."
+
+          - type: Conditional
+            id: check-format-preference
+            props:
+              condition:
+                key: user.preferMarkdown
+                operator: "=="
+                value: true
+            children:
+              # If markdown preferred
+              - type: PrintAction
+                id: format-markdown
+                props:
+                  message: "Formatting as markdown..."
+
+              # Else: plain text
+              - type: PrintAction
+                id: format-plaintext
+                props:
+                  message: "Formatting as plain text..."
+
+          - type: PrintAction
+            id: add-citations
+            props:
+              message: "Adding citations and sources..."
+
+  # Step 5: Delivery and feedback loop
+  - type: Sequence
+    id: delivery
+    name: Response Delivery
+    children:
+      - type: PrintAction
+        id: send-response
+        props:
+          message: "Sending response to user..."
+
+      - type: Parallel
+        id: post-delivery
+        props:
+          strategy: any  # Best effort
+        children:
+          - type: PrintAction
+            id: log-interaction
+            props:
+              message: "Logging interaction for analytics..."
+
+          - type: PrintAction
+            id: update-context
+            props:
+              message: "Updating conversation context..."
+
+          - type: PrintAction
+            id: store-feedback
+            props:
+              message: "Storing feedback signals..."
+
+      - type: PrintAction
+        id: agent-complete
+        props:
+          message: "AI agent workflow completed successfully!"
