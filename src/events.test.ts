@@ -2,15 +2,12 @@
  * Tests for event system
  */
 
-import { beforeEach, describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ScopedBlackboard } from "./blackboard.js";
 import { Sequence } from "./composites/sequence.js";
 import { type NodeEvent, NodeEventEmitter, NodeEventType } from "./events.js";
-import { Registry } from "./registry.js";
 import { RunningNode, SuccessNode } from "./test-nodes.js";
-import { TickEngine } from "./tick-engine.js";
-import { type EffectTickContext, NodeStatus } from "./types.js";
+import { type TemporalContext, NodeStatus } from "./types.js";
 
 describe("NodeEventEmitter", () => {
   let emitter: NodeEventEmitter;
@@ -189,93 +186,82 @@ describe("Event Integration with Nodes", () => {
   });
 
   describe("TICK Events", () => {
-    it.effect(
-      "should emit TICK_START and TICK_END for successful execution",
-      () =>
-        Effect.gen(function* (_) {
-          const events: NodeEvent[] = [];
-          emitter.onAll((event) => events.push(event));
+    it("should emit TICK_START and TICK_END for successful execution", async () => {
+      const events: NodeEvent[] = [];
+      emitter.onAll((event) => events.push(event));
 
-          const node = new SuccessNode({ id: "success" });
-          const context: EffectTickContext = {
-            blackboard,
-            timestamp: Date.now(),
-            deltaTime: 0,
-            runningOps: new Map(),
-            eventEmitter: emitter,
-          };
-          yield* _(node.tick(context));
+      const node = new SuccessNode({ id: "success" });
+      const context: TemporalContext = {
+        blackboard,
+        timestamp: Date.now(),
+        deltaTime: 0,
+        eventEmitter: emitter,
+      };
+      await node.tick(context);
 
-          expect(events.length).toBe(2);
-          expect(events[0]?.type).toBe(NodeEventType.TICK_START);
-          expect(events[0]?.nodeId).toBe("success");
-          expect(events[1]?.type).toBe(NodeEventType.TICK_END);
-          expect(events[1]?.data?.status).toBe(NodeStatus.SUCCESS);
-        }),
-    );
+      expect(events.length).toBe(2);
+      expect(events[0]?.type).toBe(NodeEventType.TICK_START);
+      expect(events[0]?.nodeId).toBe("success");
+      expect(events[1]?.type).toBe(NodeEventType.TICK_END);
+      expect(events[1]?.data?.status).toBe(NodeStatus.SUCCESS);
+    });
 
-    it.effect("should emit events for all nodes in a tree", () =>
-      Effect.gen(function* (_) {
-        const events: NodeEvent[] = [];
-        emitter.onAll((event) => events.push(event));
+    it("should emit events for all nodes in a tree", async () => {
+      const events: NodeEvent[] = [];
+      emitter.onAll((event) => events.push(event));
 
-        const sequence = new Sequence({ id: "seq" });
-        sequence.addChildren([
-          new SuccessNode({ id: "child1" }),
-          new SuccessNode({ id: "child2" }),
-        ]);
+      const sequence = new Sequence({ id: "seq" });
+      sequence.addChildren([
+        new SuccessNode({ id: "child1" }),
+        new SuccessNode({ id: "child2" }),
+      ]);
 
-        const context: EffectTickContext = {
-          blackboard,
-          timestamp: Date.now(),
-          deltaTime: 0,
-          runningOps: new Map(),
-          eventEmitter: emitter,
-        };
-        yield* _(sequence.tick(context));
+      const context: TemporalContext = {
+        blackboard,
+        timestamp: Date.now(),
+        deltaTime: 0,
+        eventEmitter: emitter,
+      };
+      await sequence.tick(context);
 
-        // Sequence starts, child1 starts/ends, child2 starts/ends, sequence ends
-        const nodeIds = events.map((e) => e.nodeId);
-        expect(nodeIds).toContain("seq");
-        expect(nodeIds).toContain("child1");
-        expect(nodeIds).toContain("child2");
-      }),
-    );
+      // Sequence starts, child1 starts/ends, child2 starts/ends, sequence ends
+      const nodeIds = events.map((e) => e.nodeId);
+      expect(nodeIds).toContain("seq");
+      expect(nodeIds).toContain("child1");
+      expect(nodeIds).toContain("child2");
+    });
   });
 
   describe("ERROR Events", () => {
-    it.effect("should emit ERROR event when node throws", () =>
-      Effect.gen(function* (_) {
-        const events: NodeEvent[] = [];
-        emitter.on(NodeEventType.ERROR, (event) => events.push(event));
+    it("should emit ERROR event when node throws", async () => {
+      const events: NodeEvent[] = [];
+      emitter.on(NodeEventType.ERROR, (event) => events.push(event));
 
-        class ThrowingNode extends SuccessNode {
-          executeTick(_context: EffectTickContext) {
-            return Effect.fail(new Error("Test error"));
-          }
+      class ThrowingNode extends SuccessNode {
+        async executeTick(_context: TemporalContext) {
+          throw new Error("Test error");
         }
+      }
 
-        const node = new ThrowingNode({ id: "throwing" });
-        const context: EffectTickContext = {
-          blackboard,
-          timestamp: Date.now(),
-          deltaTime: 0,
-          runningOps: new Map(),
-          eventEmitter: emitter,
-        };
+      const node = new ThrowingNode({ id: "throwing" });
+      const context: TemporalContext = {
+        blackboard,
+        timestamp: Date.now(),
+        deltaTime: 0,
+        eventEmitter: emitter,
+      };
 
-        // With Effect.catchAll, errors are converted to FAILURE status
-        const status = yield* _(node.tick(context));
-        expect(status).toBe(NodeStatus.FAILURE);
-        expect(node.lastError).toBe("Test error");
+      // Errors are converted to FAILURE status
+      const status = await node.tick(context);
+      expect(status).toBe(NodeStatus.FAILURE);
+      expect(node.lastError).toBe("Test error");
 
-        // ERROR events are now emitted for Effect.fail() via Effect.catchAll
-        expect(events.length).toBe(1);
-        expect(events[0].type).toBe(NodeEventType.ERROR);
-        expect(events[0].nodeId).toBe("throwing");
-        expect(events[0].data).toEqual({ error: "Test error" });
-      }),
-    );
+      // ERROR events are emitted for thrown errors
+      expect(events.length).toBe(1);
+      expect(events[0].type).toBe(NodeEventType.ERROR);
+      expect(events[0].nodeId).toBe("throwing");
+      expect(events[0].data).toEqual({ error: "Test error" });
+    });
   });
 
   describe("HALT Events", () => {
@@ -314,94 +300,48 @@ describe("Event Integration with Nodes", () => {
   });
 });
 
-describe("Event Integration with TickEngine", () => {
-  it.effect("should pass eventEmitter from engine options to nodes", () =>
-    Effect.gen(function* (_) {
-      const events: NodeEvent[] = [];
-      const emitter = new NodeEventEmitter();
-      emitter.onAll((event) => events.push(event));
-
-      const root = new Sequence({ id: "root" });
-      root.addChild(new SuccessNode({ id: "child" }));
-
-      const treeRegistry = new Registry();
-      const engine = new TickEngine(root, {
-        eventEmitter: emitter,
-        treeRegistry,
-      });
-
-      yield* _(Effect.promise(() => engine.tick()));
-
-      expect(events.length).toBeGreaterThan(0);
-      const nodeIds = events.map((e) => e.nodeId);
-      expect(nodeIds).toContain("root");
-      expect(nodeIds).toContain("child");
-    }),
-  );
-
-  it.effect("should work without eventEmitter (optional)", () =>
-    Effect.gen(function* (_) {
-      const root = new Sequence({ id: "root" });
-      root.addChild(new SuccessNode({ id: "child" }));
-
-      const treeRegistry = new Registry();
-      const engine = new TickEngine(root, { treeRegistry }); // No eventEmitter
-
-      // Should execute normally without errors
-      const result = yield* _(Effect.promise(() => engine.tick()));
-      expect(result).toBe(NodeStatus.SUCCESS);
-    }),
-  );
-});
-
 describe("Event Data Validation", () => {
-  it.effect("should include all required fields in events", () =>
-    Effect.gen(function* (_) {
-      const events: NodeEvent[] = [];
-      const emitter = new NodeEventEmitter();
-      emitter.onAll((event) => events.push(event));
+  it("should include all required fields in events", async () => {
+    const events: NodeEvent[] = [];
+    const emitter = new NodeEventEmitter();
+    emitter.onAll((event) => events.push(event));
 
-      const node = new SuccessNode({ id: "test", name: "TestNode" });
-      const context: EffectTickContext = {
-        blackboard: new ScopedBlackboard("root"),
-        timestamp: Date.now(),
-        deltaTime: 0,
-        runningOps: new Map(),
-        eventEmitter: emitter,
-      };
-      yield* _(node.tick(context));
+    const node = new SuccessNode({ id: "test", name: "TestNode" });
+    const context: TemporalContext = {
+      blackboard: new ScopedBlackboard("root"),
+      timestamp: Date.now(),
+      deltaTime: 0,
+      eventEmitter: emitter,
+    };
+    await node.tick(context);
 
-      for (const event of events) {
-        expect(event.type).toBeDefined();
-        expect(event.nodeId).toBeDefined();
-        expect(event.nodeName).toBeDefined();
-        expect(event.nodeType).toBeDefined();
-        expect(event.timestamp).toBeGreaterThan(0);
-      }
-    }),
-  );
+    for (const event of events) {
+      expect(event.type).toBeDefined();
+      expect(event.nodeId).toBeDefined();
+      expect(event.nodeName).toBeDefined();
+      expect(event.nodeType).toBeDefined();
+      expect(event.timestamp).toBeGreaterThan(0);
+    }
+  });
 
-  it.effect("should include status in TICK_END data", () =>
-    Effect.gen(function* (_) {
-      const emitter = new NodeEventEmitter();
-      let tickEndEvent: NodeEvent | undefined;
+  it("should include status in TICK_END data", async () => {
+    const emitter = new NodeEventEmitter();
+    let tickEndEvent: NodeEvent | undefined;
 
-      emitter.on(NodeEventType.TICK_END, (event) => {
-        tickEndEvent = event;
-      });
+    emitter.on(NodeEventType.TICK_END, (event) => {
+      tickEndEvent = event;
+    });
 
-      const node = new SuccessNode({ id: "test" });
-      const context: EffectTickContext = {
-        blackboard: new ScopedBlackboard("root"),
-        timestamp: Date.now(),
-        deltaTime: 0,
-        runningOps: new Map(),
-        eventEmitter: emitter,
-      };
-      yield* _(node.tick(context));
+    const node = new SuccessNode({ id: "test" });
+    const context: TemporalContext = {
+      blackboard: new ScopedBlackboard("root"),
+      timestamp: Date.now(),
+      deltaTime: 0,
+      eventEmitter: emitter,
+    };
+    await node.tick(context);
 
-      expect(tickEndEvent).toBeDefined();
-      expect(tickEndEvent?.data?.status).toBe(NodeStatus.SUCCESS);
-    }),
-  );
+    expect(tickEndEvent).toBeDefined();
+    expect(tickEndEvent?.data?.status).toBe(NodeStatus.SUCCESS);
+  });
 });

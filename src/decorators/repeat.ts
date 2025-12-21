@@ -2,11 +2,10 @@
  * Repeat decorator - Execute child N times
  */
 
-import * as Effect from "effect/Effect";
 import { DecoratorNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "../types.js";
@@ -30,67 +29,57 @@ export class Repeat extends DecoratorNode {
     this.numCycles = config.numCycles;
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      yield* _(checkSignal(context.signal));
+    if (!this.child) {
+      throw new ConfigurationError("Repeat requires a child");
+    }
 
-      if (!self.child) {
-        return yield* _(
-          Effect.fail(new ConfigurationError("Repeat requires a child")),
-        );
-      }
+    this.log(`Repeat cycle ${this.currentCycle}/${this.numCycles}`);
 
-      self.log(`Repeat cycle ${self.currentCycle}/${self.numCycles}`);
+    // Check if we've completed all cycles
+    if (this.currentCycle >= this.numCycles) {
+      this.log("All cycles completed");
+      this._status = NodeStatus.SUCCESS;
+      this.currentCycle = 0; // Reset for next run
+      return NodeStatus.SUCCESS;
+    }
 
-      // Check if we've completed all cycles
-      if (self.currentCycle >= self.numCycles) {
-        self.log("All cycles completed");
-        self._status = NodeStatus.SUCCESS;
-        self.currentCycle = 0; // Reset for next run
-        return NodeStatus.SUCCESS;
-      }
+    // Tick child
+    const result = await this.child.tick(context);
 
-      // Tick child
-      const result = yield* _(self.child.tick(context));
+    switch (result) {
+      case NodeStatus.SUCCESS:
+        this.log(`Cycle ${this.currentCycle} succeeded`);
+        this.currentCycle++;
 
-      switch (result) {
-        case NodeStatus.SUCCESS:
-          self.log(`Cycle ${self.currentCycle} succeeded`);
-          self.currentCycle++;
-
-          // Check if more cycles remain
-          if (self.currentCycle < self.numCycles) {
-            self.child.reset(); // Reset for next cycle
-            self._status = NodeStatus.RUNNING;
-            return NodeStatus.RUNNING;
-          } else {
-            // All cycles complete - don't reset after final cycle
-            self._status = NodeStatus.SUCCESS;
-            self.currentCycle = 0;
-            return NodeStatus.SUCCESS;
-          }
-
-        case NodeStatus.FAILURE:
-          self.log(`Cycle ${self.currentCycle} failed`);
-          self._status = NodeStatus.FAILURE;
-          self.currentCycle = 0;
-          return NodeStatus.FAILURE;
-
-        case NodeStatus.RUNNING:
-          self.log(`Cycle ${self.currentCycle} is running`);
-          self._status = NodeStatus.RUNNING;
+        // Check if more cycles remain
+        if (this.currentCycle < this.numCycles) {
+          this.child.reset(); // Reset for next cycle
+          this._status = NodeStatus.RUNNING;
           return NodeStatus.RUNNING;
+        } else {
+          // All cycles complete - don't reset after final cycle
+          this._status = NodeStatus.SUCCESS;
+          this.currentCycle = 0;
+          return NodeStatus.SUCCESS;
+        }
 
-        default:
-          return yield* _(
-            Effect.fail(new Error(`Unexpected status from child: ${result}`)),
-          );
-      }
-    });
+      case NodeStatus.FAILURE:
+        this.log(`Cycle ${this.currentCycle} failed`);
+        this._status = NodeStatus.FAILURE;
+        this.currentCycle = 0;
+        return NodeStatus.FAILURE;
+
+      case NodeStatus.RUNNING:
+        this.log(`Cycle ${this.currentCycle} is running`);
+        this._status = NodeStatus.RUNNING;
+        return NodeStatus.RUNNING;
+
+      default:
+        throw new Error(`Unexpected status from child: ${result}`);
+    }
   }
 
   protected onReset(): void {

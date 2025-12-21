@@ -3,7 +3,6 @@
  * These utilities provide cancellation support across behavior tree nodes
  */
 
-import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vitest";
 import {
   checkSignal,
@@ -17,41 +16,33 @@ describe("signal-check utilities", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const result = Effect.runSyncExit(checkSignal(controller.signal));
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(result.cause._tag).toBe("Fail");
-        if (result.cause._tag === "Fail") {
-          expect(result.cause.error).toBeInstanceOf(OperationCancelledError);
-          expect(result.cause.error.message).toBe("Operation was cancelled");
-        }
+      try {
+        checkSignal(controller.signal);
+        expect.fail("Should have thrown an error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(OperationCancelledError);
+        expect((error as OperationCancelledError).message).toBe("Operation was cancelled");
       }
     });
 
     it("should succeed when signal is undefined", () => {
-      const result = Effect.runSyncExit(checkSignal(undefined));
-      expect(result._tag).toBe("Success");
+      expect(() => checkSignal(undefined)).not.toThrow();
     });
 
     it("should succeed when signal is provided but not aborted", () => {
       const controller = new AbortController();
-      const result = Effect.runSyncExit(checkSignal(controller.signal));
-      expect(result._tag).toBe("Success");
+      expect(() => checkSignal(controller.signal)).not.toThrow();
     });
 
     it("should include custom message in error when provided", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const result = Effect.runSyncExit(
-        checkSignal(controller.signal, "Custom operation"),
-      );
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure") {
-        expect(result.cause._tag).toBe("Fail");
-        if (result.cause._tag === "Fail") {
-          expect(result.cause.error.message).toBe("Custom operation");
-        }
+      try {
+        checkSignal(controller.signal, "Custom operation");
+        expect.fail("Should have thrown an error");
+      } catch (error) {
+        expect((error as OperationCancelledError).message).toBe("Custom operation");
       }
     });
   });
@@ -147,24 +138,28 @@ describe("signal-check utilities", () => {
   });
 
   describe("integration scenarios", () => {
-    it("should support using checkSignal in loops", () => {
+    it("should support using checkSignal in loops", async () => {
       const controller = new AbortController();
       let iterations = 0;
 
-      const performWork = Effect.gen(function* (_) {
+      const performWork = async () => {
         for (let i = 0; i < 1000; i++) {
-          yield* _(checkSignal(controller.signal));
+          await checkSignal(controller.signal);
           iterations++;
 
           if (i === 5) {
             controller.abort();
           }
         }
-      });
+      };
 
-      const result = Effect.runSyncExit(performWork);
-      expect(result._tag).toBe("Failure");
-      expect(iterations).toBe(6); // 0, 1, 2, 3, 4, 5, then abort
+      try {
+        await performWork();
+        expect.fail("Should have thrown an error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(OperationCancelledError);
+        expect(iterations).toBe(6); // 0, 1, 2, 3, 4, 5, then abort
+      }
     });
 
     it("should support racing abort promise with actual work", async () => {
@@ -189,43 +184,51 @@ describe("signal-check utilities", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const performAsyncWork = Effect.gen(function* (_) {
+      const performAsyncWork = async () => {
         // Check signal before starting work
-        yield* _(checkSignal(controller.signal));
+        await checkSignal(controller.signal);
 
         // This should never execute
-        yield* _(Effect.sleep("100 millis"));
+        await new Promise((resolve) => setTimeout(resolve, 100));
         return "completed";
-      });
+      };
 
-      const result = await Effect.runPromiseExit(performAsyncWork);
-      expect(result._tag).toBe("Failure");
+      try {
+        await performAsyncWork();
+        expect.fail("Should have thrown an error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(OperationCancelledError);
+      }
     });
 
     it("should support checking signal multiple times during execution", async () => {
       const controller = new AbortController();
       let checkpointReached = 0;
 
-      const performWork = Effect.gen(function* (_) {
-        yield* _(checkSignal(controller.signal));
+      const performWork = async () => {
+        await checkSignal(controller.signal);
         checkpointReached = 1;
-        yield* _(Effect.sleep("10 millis"));
+        await new Promise((resolve) => setTimeout(resolve, 10));
 
-        yield* _(checkSignal(controller.signal));
+        await checkSignal(controller.signal);
         checkpointReached = 2;
-        yield* _(Effect.sleep("10 millis"));
+        await new Promise((resolve) => setTimeout(resolve, 10));
 
-        yield* _(checkSignal(controller.signal));
+        await checkSignal(controller.signal);
         checkpointReached = 3;
-      });
+      };
 
       // Start work and abort after checkpoint 1 but before checkpoint 2
-      const workPromise = Effect.runPromiseExit(performWork);
+      const workPromise = performWork();
       setTimeout(() => controller.abort(), 5);
 
-      const result = await workPromise;
-      expect(result._tag).toBe("Failure");
-      expect(checkpointReached).toBe(1);
+      try {
+        await workPromise;
+        expect.fail("Should have thrown an error");
+      } catch (error) {
+        expect(error).toBeInstanceOf(OperationCancelledError);
+        expect(checkpointReached).toBe(1);
+      }
     });
   });
 });

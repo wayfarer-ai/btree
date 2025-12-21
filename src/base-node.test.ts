@@ -1,11 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "@effect/vitest";
-import * as Effect from "effect/Effect";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ActionNode, CompositeNode, DecoratorNode } from "./base-node.js";
 import { ScopedBlackboard } from "./blackboard.js";
 import { ConfigurationError } from "./errors.js";
 import { NodeEventEmitter, NodeEventType } from "./events.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "./types.js";
@@ -13,48 +12,41 @@ import { OperationCancelledError } from "./utils/signal-check.js";
 
 // Mock implementations for testing
 class MockActionNode extends ActionNode {
-  executeTick(_context: EffectTickContext) {
-    return Effect.sync(() => {
-      this._status = NodeStatus.SUCCESS;
-      return NodeStatus.SUCCESS;
-    });
+  async executeTick(_context: TemporalContext) {
+    this._status = NodeStatus.SUCCESS;
+    return NodeStatus.SUCCESS;
   }
 }
 
 class MockDecoratorNode extends DecoratorNode {
-  executeTick(context: EffectTickContext) {
-    return Effect.gen(this, function* (_) {
-      if (!this.child) {
-        throw new Error("No child");
-      }
-      return yield* _(this.child.tick(context));
-    }) as Effect.Effect<NodeStatus, never, never>;
+  async executeTick(context: TemporalContext) {
+    if (!this.child) {
+      throw new Error("No child");
+    }
+    return await this.child.tick(context);
   }
 }
 
 class MockCompositeNode extends CompositeNode {
-  executeTick(context: EffectTickContext) {
-    return Effect.gen(this, function* (_) {
-      for (const child of this._children) {
-        const status = yield* _(child.tick(context));
-        if (status !== NodeStatus.SUCCESS) {
-          return status;
-        }
+  async executeTick(context: TemporalContext) {
+    for (const child of this._children) {
+      const status = await child.tick(context);
+      if (status !== NodeStatus.SUCCESS) {
+        return status;
       }
-      return yield* _(Effect.succeed(NodeStatus.SUCCESS));
-    });
+    }
+    return NodeStatus.SUCCESS;
   }
 }
 
 describe("BaseNode", () => {
-  let context: EffectTickContext;
+  let context: TemporalContext;
 
   beforeEach(() => {
     context = {
       blackboard: new ScopedBlackboard(),
       timestamp: Date.now(),
       deltaTime: 0,
-      runningOps: new Map(),
     };
   });
 
@@ -84,16 +76,14 @@ describe("BaseNode", () => {
   });
 
   describe("Status management", () => {
-    it.effect("should track node status", () =>
-      Effect.gen(function* (_) {
-        const node = new MockActionNode({ id: "test" });
+    it("should track node status", async () => {
+      const node = new MockActionNode({ id: "test" });
 
-        expect(node.status()).toBe(NodeStatus.IDLE);
+      expect(node.status()).toBe(NodeStatus.IDLE);
 
-        yield* _(node.tick(context));
-        expect(node.status()).toBe(NodeStatus.SUCCESS);
-      }),
-    );
+      await node.tick(context);
+      expect(node.status()).toBe(NodeStatus.SUCCESS);
+    });
   });
 
   describe("Halt and Reset", () => {
@@ -181,14 +171,13 @@ describe("BaseNode", () => {
 });
 
 describe("DecoratorNode", () => {
-  let _context: EffectTickContext;
+  let _context: TemporalContext;
 
   beforeEach(() => {
     _context = {
       blackboard: new ScopedBlackboard(),
       timestamp: Date.now(),
       deltaTime: 0,
-      runningOps: new Map(),
     };
   });
 
@@ -230,14 +219,13 @@ describe("DecoratorNode", () => {
 });
 
 describe("CompositeNode", () => {
-  let _context: EffectTickContext;
+  let _context: TemporalContext;
 
   beforeEach(() => {
     _context = {
       blackboard: new ScopedBlackboard(),
       timestamp: Date.now(),
       deltaTime: 0,
-      runningOps: new Map(),
     };
   });
 
@@ -350,7 +338,7 @@ describe("lastError property", () => {
 });
 
 describe("Error handling in tick()", () => {
-  let context: EffectTickContext;
+  let context: TemporalContext;
   let eventEmitter: NodeEventEmitter;
   let errorEvents: any[];
   let tickEndEvents: any[];
@@ -368,185 +356,156 @@ describe("Error handling in tick()", () => {
       blackboard: new ScopedBlackboard(),
       timestamp: Date.now(),
       deltaTime: 0,
-      runningOps: new Map(),
       eventEmitter,
     };
   });
 
-  it.effect("should catch Effect.fail and convert to FAILURE status", () =>
-    Effect.gen(function* (_) {
-      class FailingNode extends ActionNode {
-        executeTick(_context: EffectTickContext) {
-          return Effect.fail(new Error("Test error from Effect.fail"));
-        }
+  it("should catch thrown errors and convert to FAILURE status", async () => {
+    class FailingNode extends ActionNode {
+      async executeTick(_context: TemporalContext) {
+        throw new Error("Test error from Effect.fail");
       }
+    }
 
-      const node = new FailingNode({ id: "test" });
-      const status = yield* _(node.tick(context));
+    const node = new FailingNode({ id: "test" });
+    const status = await node.tick(context);
 
-      expect(status).toBe(NodeStatus.FAILURE);
-      expect(node.status()).toBe(NodeStatus.FAILURE);
-      expect(node.lastError).toBe("Test error from Effect.fail");
-    }),
-  );
+    expect(status).toBe(NodeStatus.FAILURE);
+    expect(node.status()).toBe(NodeStatus.FAILURE);
+    expect(node.lastError).toBe("Test error from Effect.fail");
+  });
 
-  it.effect("should catch JavaScript throw and convert to FAILURE status", () =>
-    Effect.gen(function* (_) {
-      class ThrowingNode extends ActionNode {
-        executeTick(
-          _context: EffectTickContext,
-        ): Effect.Effect<NodeStatus, Error, never> {
-          return Effect.fail(new Error("Test error from throw"));
-        }
+  it("should catch JavaScript throw and convert to FAILURE status", async () => {
+    class ThrowingNode extends ActionNode {
+      async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+        throw new Error("Test error from throw");
       }
+    }
 
-      const node = new ThrowingNode({ id: "test" });
-      const status = yield* _(node.tick(context));
+    const node = new ThrowingNode({ id: "test" });
+    const status = await node.tick(context);
 
-      expect(status).toBe(NodeStatus.FAILURE);
-      expect(node.status()).toBe(NodeStatus.FAILURE);
-      expect(node.lastError).toBe("Test error from throw");
-    }),
-  );
+    expect(status).toBe(NodeStatus.FAILURE);
+    expect(node.status()).toBe(NodeStatus.FAILURE);
+    expect(node.lastError).toBe("Test error from throw");
+  });
 
-  it.effect("should emit ERROR event when error occurs", () =>
-    Effect.gen(function* (_) {
-      class FailingNode extends ActionNode {
-        executeTick(_context: EffectTickContext) {
-          return Effect.fail(new Error("Test error"));
-        }
+  it("should emit ERROR event when error occurs", async () => {
+    class FailingNode extends ActionNode {
+      async executeTick(_context: TemporalContext) {
+        throw new Error("Test error");
       }
+    }
 
-      const node = new FailingNode({ id: "test-id", name: "test-name" });
-      yield* _(node.tick(context));
+    const node = new FailingNode({ id: "test-id", name: "test-name" });
+    await node.tick(context);
 
-      expect(errorEvents.length).toBe(1);
-      expect(errorEvents[0].nodeId).toBe("test-id");
-      expect(errorEvents[0].nodeName).toBe("test-name");
-      expect(errorEvents[0].data.error).toBe("Test error");
-    }),
-  );
+    expect(errorEvents.length).toBe(1);
+    expect(errorEvents[0].nodeId).toBe("test-id");
+    expect(errorEvents[0].nodeName).toBe("test-name");
+    expect(errorEvents[0].data.error).toBe("Test error");
+  });
 
-  it.effect("should emit TICK_END with FAILURE status on error", () =>
-    Effect.gen(function* (_) {
-      class FailingNode extends ActionNode {
-        executeTick(_context: EffectTickContext) {
-          return Effect.fail(new Error("Test error"));
-        }
+  it("should emit TICK_END with FAILURE status on error", async () => {
+    class FailingNode extends ActionNode {
+      async executeTick(_context: TemporalContext) {
+        throw new Error("Test error");
       }
+    }
 
-      const node = new FailingNode({ id: "test" });
-      yield* _(node.tick(context));
+    const node = new FailingNode({ id: "test" });
+    await node.tick(context);
 
-      const failureEvents = tickEndEvents.filter(
-        (e) => e.data.status === NodeStatus.FAILURE,
-      );
-      expect(failureEvents.length).toBe(1);
-      expect(failureEvents[0].nodeId).toBe("test");
-    }),
-  );
+    const failureEvents = tickEndEvents.filter(
+      (e) => e.data.status === NodeStatus.FAILURE,
+    );
+    expect(failureEvents.length).toBe(1);
+    expect(failureEvents[0].nodeId).toBe("test");
+  });
 
-  it.effect(
-    "should re-propagate OperationCancelledError as Effect failure",
-    () =>
-      Effect.gen(function* (_) {
-        class CancellingNode extends ActionNode {
-          executeTick(_context: EffectTickContext) {
-            return Effect.fail(
-              new OperationCancelledError("Test cancellation"),
-            );
-          }
-        }
-
-        const node = new CancellingNode({ id: "test" });
-
-        // OperationCancelledError should propagate as Effect failure
-        const result = yield* _(Effect.exit(node.tick(context)));
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure" && result.cause._tag === "Fail") {
-          expect(result.cause.error).toBeInstanceOf(OperationCancelledError);
-        }
-
-        // But node status should still be FAILURE
-        expect(node.status()).toBe(NodeStatus.FAILURE);
-        expect(node.lastError).toBe("Test cancellation");
-      }),
-  );
-
-  it.effect("should emit ERROR event even for OperationCancelledError", () =>
-    Effect.gen(function* (_) {
-      class CancellingNode extends ActionNode {
-        executeTick(
-          _context: EffectTickContext,
-        ): Effect.Effect<NodeStatus, Error, never> {
-          return Effect.fail(new OperationCancelledError("Test cancellation"));
-        }
+  it("should re-propagate OperationCancelledError", async () => {
+    class CancellingNode extends ActionNode {
+      async executeTick(_context: TemporalContext) {
+        throw new OperationCancelledError("Test cancellation");
       }
+    }
 
-      const node = new CancellingNode({ id: "test" });
+    const node = new CancellingNode({ id: "test" });
 
-      // Use catchAll to handle the re-propagated error
-      yield* _(
-        node
-          .tick(context)
-          .pipe(Effect.catchAll(() => Effect.succeed(NodeStatus.FAILURE))),
-      );
+    // OperationCancelledError should propagate as rejection
+    try {
+      await node.tick(context);
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(OperationCancelledError);
+    }
 
-      expect(errorEvents.length).toBe(1);
-      expect(errorEvents[0].data.error).toBe("Test cancellation");
-    }),
-  );
+    // But node status should still be FAILURE
+    expect(node.status()).toBe(NodeStatus.FAILURE);
+    expect(node.lastError).toBe("Test cancellation");
+  });
 
-  it.effect("should re-propagate ConfigurationError as Effect failure", () =>
-    Effect.gen(function* (_) {
-      class MisconfiguredNode extends ActionNode {
-        executeTick(_context: EffectTickContext) {
-          return Effect.fail(
-            new ConfigurationError("Test is broken - missing element"),
-          );
-        }
+  it("should emit ERROR event even for OperationCancelledError", async () => {
+    class CancellingNode extends ActionNode {
+      async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+        throw new OperationCancelledError("Test cancellation");
       }
+    }
 
-      const node = new MisconfiguredNode({ id: "test" });
+    const node = new CancellingNode({ id: "test" });
 
-      // ConfigurationError should propagate as Effect failure
-      const result = yield* _(Effect.exit(node.tick(context)));
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure" && result.cause._tag === "Fail") {
-        expect(result.cause.error).toBeInstanceOf(ConfigurationError);
+    // Catch the re-propagated error
+    try {
+      await node.tick(context);
+    } catch (error) {
+      // Expected to throw
+    }
+
+    expect(errorEvents.length).toBe(1);
+    expect(errorEvents[0].data.error).toBe("Test cancellation");
+  });
+
+  it("should re-propagate ConfigurationError", async () => {
+    class MisconfiguredNode extends ActionNode {
+      async executeTick(_context: TemporalContext) {
+        throw new ConfigurationError("Test is broken - missing element");
       }
+    }
 
-      // But node status should still be FAILURE
-      expect(node.status()).toBe(NodeStatus.FAILURE);
-      expect(node.lastError).toBe("Test is broken - missing element");
-    }),
-  );
+    const node = new MisconfiguredNode({ id: "test" });
 
-  it.effect("should emit ERROR event even for ConfigurationError", () =>
-    Effect.gen(function* (_) {
-      class MisconfiguredNode extends ActionNode {
-        executeTick(
-          _context: EffectTickContext,
-        ): Effect.Effect<NodeStatus, Error, never> {
-          return Effect.fail(
-            new ConfigurationError("Test is broken - missing element"),
-          );
-        }
+    // ConfigurationError should propagate as rejection
+    try {
+      await node.tick(context);
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigurationError);
+    }
+
+    // But node status should still be FAILURE
+    expect(node.status()).toBe(NodeStatus.FAILURE);
+    expect(node.lastError).toBe("Test is broken - missing element");
+  });
+
+  it("should emit ERROR event even for ConfigurationError", async () => {
+    class MisconfiguredNode extends ActionNode {
+      async executeTick(_context: TemporalContext): Promise<NodeStatus> {
+        throw new ConfigurationError("Test is broken - missing element");
       }
+    }
 
-      const node = new MisconfiguredNode({ id: "test" });
+    const node = new MisconfiguredNode({ id: "test" });
 
-      // Use catchAll to handle the re-propagated error
-      yield* _(
-        node
-          .tick(context)
-          .pipe(Effect.catchAll(() => Effect.succeed(NodeStatus.FAILURE))),
-      );
+    // Catch the re-propagated error
+    try {
+      await node.tick(context);
+    } catch (error) {
+      // Expected to throw
+    }
 
-      expect(errorEvents.length).toBe(1);
-      expect(errorEvents[0].data.error).toBe(
-        "Test is broken - missing element",
-      );
-    }),
-  );
+    expect(errorEvents.length).toBe(1);
+    expect(errorEvents[0].data.error).toBe(
+      "Test is broken - missing element",
+    );
+  });
 });

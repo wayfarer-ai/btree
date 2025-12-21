@@ -3,16 +3,14 @@
  * Waits for a specified duration before executing the child
  */
 
-import * as Effect from "effect/Effect";
-
 import { DecoratorNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "../types.js";
-import { checkSignal, OperationCancelledError } from "../utils/signal-check.js";
+import { checkSignal } from "../utils/signal-check.js";
 
 export interface DelayConfiguration extends NodeConfiguration {
   /**
@@ -36,70 +34,47 @@ export class Delay extends DecoratorNode {
     }
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      yield* _(checkSignal(context.signal));
+    if (!this.child) {
+      throw new ConfigurationError(`${this.name}: Decorator must have a child`);
+    }
 
-      if (!self.child) {
-        return yield* _(
-          Effect.fail(
-            new ConfigurationError(`${self.name}: Decorator must have a child`),
-          ),
-        );
-      }
+    // If delay is 0, just execute the child immediately
+    if (this.delayMs === 0) {
+      return await this.child.tick(context);
+    }
 
-      // If delay is 0, just execute the child immediately
-      if (self.delayMs === 0) {
-        return yield* _(self.child.tick(context));
-      }
+    // Track start time for logging
+    if (this.delayStartTime === null) {
+      this.delayStartTime = Date.now();
+      this.log(`Starting delay of ${this.delayMs}ms`);
+    }
 
-      // Track start time for logging
-      if (self.delayStartTime === null) {
-        self.delayStartTime = Date.now();
-        self.log(`Starting delay of ${self.delayMs}ms`);
-      }
+    // Check if delay has elapsed
+    const elapsed = Date.now() - this.delayStartTime;
 
-      // Check if delay has elapsed
-      const elapsed = Date.now() - self.delayStartTime;
+    if (elapsed < this.delayMs) {
+      checkSignal(context.signal);
+      const remaining = this.delayMs - elapsed;
+      this.log(`Delaying... ${remaining}ms remaining`);
+      this._status = NodeStatus.RUNNING;
+      return NodeStatus.RUNNING;
+    }
 
-      if (elapsed < self.delayMs) {
-        yield* _(checkSignal(context.signal));
-        const remaining = self.delayMs - elapsed;
-        self.log(`Delaying... ${remaining}ms remaining`);
-        self._status = NodeStatus.RUNNING;
-        return NodeStatus.RUNNING;
-      }
+    // Delay elapsed, execute child
+    this.log("Delay completed, executing child");
+    checkSignal(context.signal);
+    const childStatus = await this.child.tick(context);
 
-      // Delay elapsed, execute child
-      self.log("Delay completed, executing child");
-      yield* _(checkSignal(context.signal));
-      const childStatus = yield* _(self.child.tick(context));
+    // If child completes, reset for next execution
+    if (childStatus !== NodeStatus.RUNNING) {
+      this.delayStartTime = null;
+    }
 
-      // If child completes, reset for next execution
-      if (childStatus !== NodeStatus.RUNNING) {
-        self.delayStartTime = null;
-      }
-
-      self._status = childStatus;
-      return childStatus;
-    }).pipe(
-      Effect.catchAll((error) => {
-        // Re-throw OperationCancelledError so it propagates to base node's catchAll
-        if (error instanceof OperationCancelledError) {
-          return Effect.fail(error) as unknown as Effect.Effect<
-            NodeStatus,
-            never,
-            never
-          >;
-        }
-        // Other errors should not happen here, but if they do, convert to FAILURE
-        return Effect.succeed(NodeStatus.FAILURE);
-      }),
-    ) as Effect.Effect<NodeStatus, never, never>;
+    this._status = childStatus;
+    return childStatus;
   }
 
   protected onHalt(): void {

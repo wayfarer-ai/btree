@@ -3,11 +3,10 @@
  * Retries the child node on failure up to a specified number of times
  */
 
-import * as Effect from "effect/Effect";
 import { DecoratorNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "../types.js";
@@ -40,83 +39,73 @@ export class RetryUntilSuccessful extends DecoratorNode {
     this.retryDelay = config.retryDelay ?? 0;
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      yield* _(checkSignal(context.signal));
+    if (!this.child) {
+      throw new ConfigurationError(`${this.name}: Decorator must have a child`);
+    }
 
-      if (!self.child) {
-        return yield* _(
-          Effect.fail(
-            new ConfigurationError(`${self.name}: Decorator must have a child`),
-          ),
-        );
+    // Handle retry delay
+    if (this.isWaiting) {
+      checkSignal(context.signal);
+      const elapsed = Date.now() - this.waitStartTime;
+      if (elapsed < this.retryDelay) {
+        this.log(`Waiting ${this.retryDelay - elapsed}ms before retry`);
+        this._status = NodeStatus.RUNNING;
+        return NodeStatus.RUNNING;
       }
+      this.isWaiting = false;
+    }
 
-      // Handle retry delay
-      if (self.isWaiting) {
-        yield* _(checkSignal(context.signal));
-        const elapsed = Date.now() - self.waitStartTime;
-        if (elapsed < self.retryDelay) {
-          self.log(`Waiting ${self.retryDelay - elapsed}ms before retry`);
-          self._status = NodeStatus.RUNNING;
+    // Tick the child
+    this.log(`Attempt ${this.currentAttempt + 1}/${this.maxAttempts}`);
+    const childStatus = await this.child.tick(context);
+
+    switch (childStatus) {
+      case NodeStatus.SUCCESS:
+        this.log("Child succeeded");
+        this._status = NodeStatus.SUCCESS;
+        this.currentAttempt = 0;
+        return NodeStatus.SUCCESS;
+
+      case NodeStatus.FAILURE:
+        this.currentAttempt++;
+
+        if (this.currentAttempt >= this.maxAttempts) {
+          this.log(`Max attempts (${this.maxAttempts}) reached - failing`);
+          this._status = NodeStatus.FAILURE;
+          this.currentAttempt = 0;
+          return NodeStatus.FAILURE;
+        }
+
+        this.log(
+          `Child failed, will retry (${this.currentAttempt}/${this.maxAttempts})`,
+        );
+
+        // Reset child for retry
+        this.child.reset();
+
+        // Start delay if configured
+        if (this.retryDelay > 0) {
+          this.isWaiting = true;
+          this.waitStartTime = Date.now();
+          this._status = NodeStatus.RUNNING;
           return NodeStatus.RUNNING;
         }
-        self.isWaiting = false;
-      }
 
-      // Tick the child
-      self.log(`Attempt ${self.currentAttempt + 1}/${self.maxAttempts}`);
-      const childStatus = yield* _(self.child.tick(context));
+        // Immediate retry
+        this._status = NodeStatus.RUNNING;
+        return NodeStatus.RUNNING;
 
-      switch (childStatus) {
-        case NodeStatus.SUCCESS:
-          self.log("Child succeeded");
-          self._status = NodeStatus.SUCCESS;
-          self.currentAttempt = 0;
-          return NodeStatus.SUCCESS;
+      case NodeStatus.RUNNING:
+        this.log("Child is running");
+        this._status = NodeStatus.RUNNING;
+        return NodeStatus.RUNNING;
 
-        case NodeStatus.FAILURE:
-          self.currentAttempt++;
-
-          if (self.currentAttempt >= self.maxAttempts) {
-            self.log(`Max attempts (${self.maxAttempts}) reached - failing`);
-            self._status = NodeStatus.FAILURE;
-            self.currentAttempt = 0;
-            return NodeStatus.FAILURE;
-          }
-
-          self.log(
-            `Child failed, will retry (${self.currentAttempt}/${self.maxAttempts})`,
-          );
-
-          // Reset child for retry
-          self.child.reset();
-
-          // Start delay if configured
-          if (self.retryDelay > 0) {
-            self.isWaiting = true;
-            self.waitStartTime = Date.now();
-            self._status = NodeStatus.RUNNING;
-            return NodeStatus.RUNNING;
-          }
-
-          // Immediate retry
-          self._status = NodeStatus.RUNNING;
-          return NodeStatus.RUNNING;
-
-        case NodeStatus.RUNNING:
-          self.log("Child is running");
-          self._status = NodeStatus.RUNNING;
-          return NodeStatus.RUNNING;
-
-        default:
-          return childStatus;
-      }
-    });
+      default:
+        return childStatus;
+    }
   }
 
   protected onHalt(): void {
@@ -127,5 +116,14 @@ export class RetryUntilSuccessful extends DecoratorNode {
   protected onReset(): void {
     this.currentAttempt = 0;
     this.isWaiting = false;
+  }
+}
+
+/**
+ * Retry is an alias for RetryUntilSuccessful (BehaviorTree.CPP compatibility)
+ */
+export class Retry extends RetryUntilSuccessful {
+  constructor(config: NodeConfiguration & { maxAttempts: number; retryDelay?: number }) {
+    super({ ...config, type: "Retry" });
   }
 }

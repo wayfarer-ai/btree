@@ -11,7 +11,6 @@ export enum NodeStatus {
   FAILURE = "FAILURE",
   RUNNING = "RUNNING",
   IDLE = "IDLE",
-  SKIPPED = "SKIPPED",
 }
 
 /**
@@ -37,10 +36,6 @@ export interface TickContext {
   // Used for $param.key variable resolution
   testData?: Map<string, unknown>;
 
-  // Resumable execution support (for dry-run agents and debugging)
-  // When set, skip all nodes until we reach resumeFromNodeId, then execute normally from there
-  resumeFromNodeId?: string;
-  hasReachedResumePoint?: boolean; // Internal flag - set to true when resume point is reached
   sessionId?: string;
 
   // Observable event system (for monitoring, debugging, visualization)
@@ -49,25 +44,16 @@ export interface TickContext {
 }
 
 /**
- * Running operation tracked for async/RUNNING semantics with Effect fibers
+ * Extended context for Temporal workflow execution
+ * Replaces EffectTickContext for Temporal-native execution
  */
-/**
- * Tracks a running async operation
- * Uses simple Promise + completion flag for O(1) status checks
- */
-export interface RunningOperation {
-  promise: Promise<NodeStatus>;
-  completed: boolean;
-  result?: NodeStatus;
-  error?: Error;
-}
-
-/**
- * Extended context for Effect-based execution with running operation tracking
- */
-export interface EffectTickContext extends TickContext {
-  // Map of nodeId → running operation for async status tracking
-  runningOps: Map<string, RunningOperation>;
+export interface TemporalContext extends TickContext {
+  // Optional workflow metadata (for activities that need workflow context)
+  workflowInfo?: {
+    workflowId: string;
+    runId: string;
+    namespace: string;
+  };
 }
 
 /**
@@ -89,11 +75,9 @@ export interface TreeNode {
   readonly name: string;
   readonly type: string;
 
-  // Core methods - now returns Effect for proper async/RUNNING semantics
+  // Core methods - returns Promise for async/RUNNING semantics
   // All errors are caught and converted to NodeStatus.FAILURE
-  tick(
-    context: EffectTickContext,
-  ): import("effect/Effect").Effect<NodeStatus, never, never>;
+  tick(context: TemporalContext): Promise<NodeStatus>;
   halt(): void;
   reset(): void;
   clone(): TreeNode;
@@ -179,4 +163,39 @@ export interface IScopedBlackboard {
 
   // Snapshot utilities - uses native structuredClone for deep cloning
   clone(): IScopedBlackboard;
+}
+
+/**
+ * Arguments passed to a BehaviorTree workflow
+ */
+export interface WorkflowArgs {
+  /**
+   * Input data to initialize the blackboard
+   */
+  input?: Record<string, unknown>;
+
+  /**
+   * Tree registry for looking up subtrees
+   */
+  treeRegistry: ITreeRegistry;
+
+  /**
+   * Optional session ID
+   */
+  sessionId?: string;
+}
+
+/**
+ * Result returned from a BehaviorTree workflow
+ */
+export interface WorkflowResult {
+  /**
+   * Final status of the tree
+   */
+  status: NodeStatus;
+
+  /**
+   * Final blackboard state
+   */
+  output: Record<string, unknown>;
 }

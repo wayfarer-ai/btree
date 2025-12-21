@@ -16,11 +16,14 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "antlr4": "^4.13.2",
-    "effect": "^3.19.2"
+    "@temporalio/workflow": "^1.10.0",
+    "@temporalio/activity": "^1.10.0",
+    "antlr4": "^4.13.2"
   },
   "devDependencies": {
-    "@effect/vitest": "0.27.0",
+    "@temporalio/client": "^1.10.0",
+    "@temporalio/worker": "^1.10.0",
+    "@temporalio/testing": "^1.10.0",
     "@types/node": "^24.2.1",
     "@vitest/coverage-v8": "^3.2.4",
     "@vitest/ui": "^3.2.4",

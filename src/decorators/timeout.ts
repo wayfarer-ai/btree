@@ -3,11 +3,10 @@
  * Fails if the child doesn't complete within a specified time
  */
 
-import * as Effect from "effect/Effect";
 import { DecoratorNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
 } from "../types.js";
@@ -35,83 +34,73 @@ export class Timeout extends DecoratorNode {
     }
   }
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      yield* _(checkSignal(context.signal));
+    if (!this.child) {
+      throw new ConfigurationError(`${this.name}: Decorator must have a child`);
+    }
 
-      if (!self.child) {
-        return yield* _(
-          Effect.fail(
-            new ConfigurationError(`${self.name}: Decorator must have a child`),
-          ),
+    // Start timer on first tick
+    if (this.startTime === null) {
+      this.startTime = Date.now();
+      this.log(`Starting timeout for ${this.timeoutMs}ms`);
+    }
+
+    // Check if time has elapsed
+    const elapsed = Date.now() - this.startTime;
+    if (elapsed >= this.timeoutMs) {
+      this.log(`Timeout after ${elapsed}ms`);
+
+      // Halt child if still running
+      if (this.child.status() === NodeStatus.RUNNING) {
+        this.child.halt();
+      }
+
+      this.startTime = null; // Reset timer
+      this._status = NodeStatus.FAILURE;
+      return NodeStatus.FAILURE;
+    }
+
+    // Tick the child
+    const remainingTime = this.timeoutMs - elapsed;
+    this.log(`Ticking child (${remainingTime}ms remaining)`);
+
+    const childStatus = await this.child.tick(context);
+
+    // Check timeout again AFTER child tick
+    const elapsedAfterTick = Date.now() - this.startTime;
+    if (elapsedAfterTick >= this.timeoutMs) {
+      this.log(`Timed out during child execution (${elapsedAfterTick}ms)`);
+
+      if (this.child.status() === NodeStatus.RUNNING) {
+        this.child.halt();
+      }
+
+      this.startTime = null; // Reset timer
+      this._status = NodeStatus.FAILURE;
+      return NodeStatus.FAILURE;
+    }
+
+    // Child completed or still running within timeout
+    switch (childStatus) {
+      case NodeStatus.SUCCESS:
+      case NodeStatus.FAILURE:
+        this.log(
+          `Child completed with ${childStatus} after ${elapsedAfterTick}ms`,
         );
-      }
+        this.startTime = null; // Reset for next execution
+        this._status = childStatus;
+        return childStatus;
 
-      // Start timer on first tick
-      if (self.startTime === null) {
-        self.startTime = Date.now();
-        self.log(`Starting timeout for ${self.timeoutMs}ms`);
-      }
+      case NodeStatus.RUNNING:
+        this._status = NodeStatus.RUNNING;
+        return NodeStatus.RUNNING;
 
-      // Check if time has elapsed
-      const elapsed = Date.now() - self.startTime;
-      if (elapsed >= self.timeoutMs) {
-        self.log(`Timeout after ${elapsed}ms`);
-
-        // Halt child if still running
-        if (self.child.status() === NodeStatus.RUNNING) {
-          self.child.halt();
-        }
-
-        self.startTime = null; // Reset timer
-        self._status = NodeStatus.FAILURE;
-        return NodeStatus.FAILURE;
-      }
-
-      // Tick the child
-      const remainingTime = self.timeoutMs - elapsed;
-      self.log(`Ticking child (${remainingTime}ms remaining)`);
-
-      const childStatus = yield* _(self.child.tick(context));
-
-      // Check timeout again AFTER child tick
-      const elapsedAfterTick = Date.now() - self.startTime;
-      if (elapsedAfterTick >= self.timeoutMs) {
-        self.log(`Timed out during child execution (${elapsedAfterTick}ms)`);
-
-        if (self.child.status() === NodeStatus.RUNNING) {
-          self.child.halt();
-        }
-
-        self.startTime = null; // Reset timer
-        self._status = NodeStatus.FAILURE;
-        return NodeStatus.FAILURE;
-      }
-
-      // Child completed or still running within timeout
-      switch (childStatus) {
-        case NodeStatus.SUCCESS:
-        case NodeStatus.FAILURE:
-          self.log(
-            `Child completed with ${childStatus} after ${elapsedAfterTick}ms`,
-          );
-          self.startTime = null; // Reset for next execution
-          self._status = childStatus;
-          return childStatus;
-
-        case NodeStatus.RUNNING:
-          self._status = NodeStatus.RUNNING;
-          return NodeStatus.RUNNING;
-
-        default:
-          self.startTime = null;
-          return childStatus;
-      }
-    });
+      default:
+        this.startTime = null;
+        return childStatus;
+    }
   }
 
   protected onHalt(): void {

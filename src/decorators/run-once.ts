@@ -2,10 +2,9 @@
  * RunOnce decorator - Execute child only once per session
  */
 
-import * as Effect from "effect/Effect";
 import { DecoratorNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
-import { type EffectTickContext, NodeStatus } from "../types.js";
+import { type TemporalContext, NodeStatus } from "../types.js";
 import { checkSignal } from "../utils/signal-check.js";
 
 /**
@@ -17,49 +16,41 @@ export class RunOnce extends DecoratorNode {
   private hasRun: boolean = false;
   private cachedResult?: NodeStatus;
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      yield* _(checkSignal(context.signal));
+    if (!this.child) {
+      throw new ConfigurationError("RunOnce requires a child");
+    }
 
-      if (!self.child) {
-        return yield* _(
-          Effect.fail(new ConfigurationError("RunOnce requires a child")),
-        );
+    // Return cached result if already executed
+    if (this.hasRun) {
+      this.log(
+        `Already executed, returning cached result: ${this.cachedResult}`,
+      );
+      if (this.cachedResult === undefined) {
+        this._status = NodeStatus.RUNNING;
+        return NodeStatus.RUNNING;
       }
+      this._status = this.cachedResult;
+      return this.cachedResult;
+    }
 
-      // Return cached result if already executed
-      if (self.hasRun) {
-        self.log(
-          `Already executed, returning cached result: ${self.cachedResult}`,
-        );
-        if (self.cachedResult === undefined) {
-          self._status = NodeStatus.RUNNING;
-          return NodeStatus.RUNNING;
-        }
-        self._status = self.cachedResult;
-        return self.cachedResult;
-      }
+    // Execute child for the first time
+    this.log("First execution - ticking child");
+    const result = await this.child.tick(context);
 
-      // Execute child for the first time
-      self.log("First execution - ticking child");
-      const result = yield* _(self.child.tick(context));
+    // Cache result only if not RUNNING
+    if (result !== NodeStatus.RUNNING) {
+      this.hasRun = true;
+      this.cachedResult = result;
+      this.log(`Caching result: ${result}`);
+    } else {
+      this.log("Child is running - will retry on next tick");
+    }
 
-      // Cache result only if not RUNNING
-      if (result !== NodeStatus.RUNNING) {
-        self.hasRun = true;
-        self.cachedResult = result;
-        self.log(`Caching result: ${result}`);
-      } else {
-        self.log("Child is running - will retry on next tick");
-      }
-
-      self._status = result;
-      return result;
-    });
+    this._status = result;
+    return result;
   }
 
   protected onReset(): void {

@@ -1,13 +1,12 @@
-import { beforeEach, describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ScopedBlackboard } from "../blackboard.js";
 import { ConfigurationError } from "../errors.js";
 import { MockAction } from "../test-nodes.js";
-import { type EffectTickContext, NodeStatus } from "../types.js";
+import { type TemporalContext, NodeStatus } from "../types.js";
 import { Invert } from "./invert.js";
 
 describe("Invert", () => {
-  let context: EffectTickContext;
+  let context: TemporalContext;
   let invert: Invert;
 
   beforeEach(() => {
@@ -15,82 +14,72 @@ describe("Invert", () => {
       blackboard: new ScopedBlackboard(),
       timestamp: Date.now(),
       deltaTime: 0,
-      runningOps: new Map(),
     };
     invert = new Invert({ id: "test-invert" });
   });
 
-  it.effect("should propagate ConfigurationError if no child is set", () =>
-    Effect.gen(function* (_) {
-      const result = yield* _(Effect.exit(invert.tick(context)));
-      expect(result._tag).toBe("Failure");
-      if (result._tag === "Failure" && result.cause._tag === "Fail") {
-        expect(result.cause.error).toBeInstanceOf(ConfigurationError);
-        expect(result.cause.error.message).toContain(
-          "Decorator must have a child",
-        );
-      }
-    }),
-  );
+  it("should propagate ConfigurationError if no child is set", async () => {
+    try {
+      await invert.tick(context);
+      throw new Error("Expected tick to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigurationError);
+      expect((error as ConfigurationError).message).toContain(
+        "Decorator must have a child",
+      );
+    }
+  });
 
-  it.effect("should invert SUCCESS to FAILURE", () =>
-    Effect.gen(function* (_) {
-      const child = new MockAction({
-        id: "child",
-        returnStatus: NodeStatus.SUCCESS,
-      });
+  it("should invert SUCCESS to FAILURE", async () => {
+    const child = new MockAction({
+      id: "child",
+      returnStatus: NodeStatus.SUCCESS,
+    });
 
-      invert.setChild(child);
+    invert.setChild(child);
 
-      const status = yield* _(invert.tick(context));
-      expect(status).toBe(NodeStatus.FAILURE);
-      expect(invert.status()).toBe(NodeStatus.FAILURE);
-    }),
-  );
+    const status = await invert.tick(context);
+    expect(status).toBe(NodeStatus.FAILURE);
+    expect(invert.status()).toBe(NodeStatus.FAILURE);
+  });
 
-  it.effect("should invert FAILURE to SUCCESS", () =>
-    Effect.gen(function* (_) {
-      const child = new MockAction({
-        id: "child",
-        returnStatus: NodeStatus.FAILURE,
-      });
+  it("should invert FAILURE to SUCCESS", async () => {
+    const child = new MockAction({
+      id: "child",
+      returnStatus: NodeStatus.FAILURE,
+    });
 
-      invert.setChild(child);
+    invert.setChild(child);
 
-      const status = yield* _(invert.tick(context));
-      expect(status).toBe(NodeStatus.SUCCESS);
-      expect(invert.status()).toBe(NodeStatus.SUCCESS);
-    }),
-  );
+    const status = await invert.tick(context);
+    expect(status).toBe(NodeStatus.SUCCESS);
+    expect(invert.status()).toBe(NodeStatus.SUCCESS);
+  });
 
-  it.effect("should pass through RUNNING status", () =>
-    Effect.gen(function* (_) {
-      const child = new MockAction({
-        id: "child",
-        returnStatus: NodeStatus.RUNNING,
-      });
+  it("should pass through RUNNING status", async () => {
+    const child = new MockAction({
+      id: "child",
+      returnStatus: NodeStatus.RUNNING,
+    });
 
-      invert.setChild(child);
+    invert.setChild(child);
 
-      const status = yield* _(invert.tick(context));
-      expect(status).toBe(NodeStatus.RUNNING);
-      expect(invert.status()).toBe(NodeStatus.RUNNING);
-    }),
-  );
+    const status = await invert.tick(context);
+    expect(status).toBe(NodeStatus.RUNNING);
+    expect(invert.status()).toBe(NodeStatus.RUNNING);
+  });
 
-  it.effect("should pass through other statuses unchanged", () =>
-    Effect.gen(function* (_) {
-      const child = new MockAction({
-        id: "child",
-        returnStatus: NodeStatus.IDLE,
-      });
+  it("should pass through other statuses unchanged", async () => {
+    const child = new MockAction({
+      id: "child",
+      returnStatus: NodeStatus.IDLE,
+    });
 
-      invert.setChild(child);
+    invert.setChild(child);
 
-      const status = yield* _(invert.tick(context));
-      expect(status).toBe(NodeStatus.IDLE);
-    }),
-  );
+    const status = await invert.tick(context);
+    expect(status).toBe(NodeStatus.IDLE);
+  });
 
   it("should properly propagate halt to child", () => {
     const child = new MockAction({
@@ -126,23 +115,21 @@ describe("Invert", () => {
     expect(child.status()).toBe(NodeStatus.IDLE);
   });
 
-  it.effect("should work with async children", () =>
-    Effect.gen(function* (_) {
-      const child = new MockAction({
-        id: "child",
-        returnStatus: NodeStatus.SUCCESS,
-        ticksBeforeComplete: 2, // Will return RUNNING first
-      });
+  it("should work with async children", async () => {
+    const child = new MockAction({
+      id: "child",
+      returnStatus: NodeStatus.SUCCESS,
+      ticksBeforeComplete: 2, // Will return RUNNING first
+    });
 
-      invert.setChild(child);
+    invert.setChild(child);
 
-      // First tick - child returns RUNNING
-      let status = yield* _(invert.tick(context));
-      expect(status).toBe(NodeStatus.RUNNING);
+    // First tick - child returns RUNNING
+    let status = await invert.tick(context);
+    expect(status).toBe(NodeStatus.RUNNING);
 
-      // Second tick - child returns SUCCESS, inverted to FAILURE
-      status = yield* _(invert.tick(context));
-      expect(status).toBe(NodeStatus.FAILURE);
-    }),
-  );
+    // Second tick - child returns SUCCESS, inverted to FAILURE
+    status = await invert.tick(context);
+    expect(status).toBe(NodeStatus.FAILURE);
+  });
 });

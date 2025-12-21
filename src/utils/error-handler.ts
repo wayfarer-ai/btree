@@ -2,14 +2,13 @@
  * Centralized error handling for behavior tree nodes
  */
 
-import * as Effect from "effect/Effect";
 import { ConfigurationError } from "../errors.js";
 import { OperationCancelledError } from "./signal-check.js";
 import { NodeStatus } from "../types.js";
 
 /**
- * Standard error handler for behavior tree nodes.
- * Re-propagates special errors (ConfigurationError, OperationCancelledError)
+ * Standard error handler for behavior tree nodes in Temporal workflows.
+ * Re-throws special errors (ConfigurationError, OperationCancelledError)
  * and converts all other errors to FAILURE status.
  *
  * This function is used by all base node classes to ensure consistent error handling:
@@ -17,33 +16,33 @@ import { NodeStatus } from "../types.js";
  * - OperationCancelledError: Execution cancelled, propagates for cleanup
  * - All other errors: Converted to NodeStatus.FAILURE
  *
+ * Usage in base classes:
+ * ```typescript
+ * try {
+ *   const status = await this.executeTick(context);
+ *   return status;
+ * } catch (error) {
+ *   return handleNodeError(error);
+ * }
+ * ```
+ *
  * @param error - The error to handle
- * @returns Effect that either fails with special errors or succeeds with FAILURE status
+ * @returns NodeStatus.FAILURE for normal errors, or throws special errors
  */
-export function handleNodeError(
-  error: unknown,
-): Effect.Effect<NodeStatus, never, never> {
-  // Re-propagate ConfigurationError - test is broken, don't mask it
+export function handleNodeError(error: unknown): NodeStatus {
+  // Re-throw ConfigurationError - test is broken, don't mask it
   // These errors indicate test authoring bugs, not operational failures
   if (error instanceof ConfigurationError) {
-    return Effect.fail(error) as unknown as Effect.Effect<
-      NodeStatus,
-      never,
-      never
-    >;
+    throw error;
   }
 
-  // Re-propagate OperationCancelledError - execution was cancelled
+  // Re-throw OperationCancelledError - execution was cancelled
   // This allows cancellation to be detected at higher levels while still
   // setting the node status to FAILURE
   if (error instanceof OperationCancelledError) {
-    return Effect.fail(error) as unknown as Effect.Effect<
-      NodeStatus,
-      never,
-      never
-    >;
+    throw error;
   }
 
   // All other errors convert to FAILURE status
-  return Effect.succeed(NodeStatus.FAILURE);
+  return NodeStatus.FAILURE;
 }

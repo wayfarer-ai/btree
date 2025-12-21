@@ -3,9 +3,8 @@
  * Always returns SUCCESS, used purely as a findable marker for LLM-based resume
  */
 
-import * as Effect from "effect/Effect";
 import { ActionNode } from "../base-node.js";
-import { type EffectTickContext, NodeStatus } from "../types.js";
+import { type TemporalContext, NodeStatus } from "../types.js";
 
 export interface ResumePointConfig {
   id: string;
@@ -23,10 +22,8 @@ export class ResumePoint extends ActionNode {
     this.resumePointId = config.id;
   }
 
-  executeTick(
-    _context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never> {
+  async executeTick(_context: TemporalContext): Promise<NodeStatus> {
     this._status = NodeStatus.SUCCESS;
-    return Effect.succeed(NodeStatus.SUCCESS);
+    return NodeStatus.SUCCESS;
   }
 }

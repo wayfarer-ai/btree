@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "@effect/vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ScopedBlackboard } from "./blackboard.js";
 
 describe("ScopedBlackboard", () => {

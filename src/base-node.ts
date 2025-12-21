@@ -2,15 +2,13 @@
  * Base implementation for all behavior tree nodes
  */
 
-import * as Effect from "effect/Effect";
 import { ConfigurationError } from "./errors.js";
 import { NodeEventType } from "./events.js";
 import {
-  type EffectTickContext,
+  type TemporalContext,
   type NodeConfiguration,
   NodeStatus,
   type PortDefinition,
-  type RunningOperation,
   type TreeNode,
 } from "./types.js";
 import { OperationCancelledError } from "./utils/signal-check.js";
@@ -41,12 +39,10 @@ export abstract class BaseNode implements TreeNode {
 
   /**
    * Main tick method - subclasses override to implement execution logic
-   * Now returns Effect for proper async/RUNNING semantics
+   * Returns Promise for async/RUNNING semantics
    * All errors are caught and converted to NodeStatus.FAILURE
    */
-  abstract tick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, never, never>;
+  abstract tick(context: TemporalContext): Promise<NodeStatus>;
 
   /**
    * Clone this node (deep copy including children)
@@ -119,7 +115,7 @@ export abstract class BaseNode implements TreeNode {
    * Helper to get input value from blackboard
    */
   protected getInput<T>(
-    context: EffectTickContext,
+    context: TemporalContext,
     key: string,
     defaultValue?: T,
   ): T {
@@ -131,7 +127,7 @@ export abstract class BaseNode implements TreeNode {
    * Helper to set output value to blackboard
    */
   protected setOutput<T>(
-    context: EffectTickContext,
+    context: TemporalContext,
     key: string,
     value: T,
   ): void {
@@ -165,187 +161,83 @@ export abstract class ActionNode extends BaseNode {
 
   /**
    * Tick with resumable execution support for leaf nodes
-   * Uses Effect for proper async/RUNNING semantics
-   * All errors (JavaScript throws and Effect failures) are converted to NodeStatus.FAILURE
+   * Uses async/await for Promise-based async/RUNNING semantics
+   * All errors are caught and converted to NodeStatus.FAILURE
    */
-  tick(context: EffectTickContext): Effect.Effect<NodeStatus, never, never> {
-    const self = this;
-
-    return Effect.gen(function* (_) {
+  async tick(context: TemporalContext): Promise<NodeStatus> {
+    try {
       // Store eventEmitter reference for halt/reset
-      self._eventEmitter = context.eventEmitter;
+      this._eventEmitter = context.eventEmitter;
 
       // Emit TICK_START event
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_START,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
       });
 
-      // Resumable execution: skip leaf nodes before resume point
-      if (context.resumeFromNodeId && !context.hasReachedResumePoint) {
-        if (self.id === context.resumeFromNodeId) {
-          // Reached the resume point - set flag and execute normally
-          context.hasReachedResumePoint = true;
-          self.log(`[Resume] Resuming execution from this node`);
-        } else {
-          // Before resume point - mark as SKIPPED
-          self.log(`[Resume] Skipping node (before resume point)`);
-          self._status = NodeStatus.SKIPPED;
-
-          // Emit TICK_END with SKIPPED status
-          context.eventEmitter?.emit({
-            type: NodeEventType.TICK_END,
-            nodeId: self.id,
-            nodeName: self.name,
-            nodeType: self.type,
-            timestamp: Date.now(),
-            data: { status: NodeStatus.SKIPPED },
-          });
-
-          // Return SKIPPED status - composites will handle this appropriately
-          return NodeStatus.SKIPPED;
-        }
-      }
-
       // Execute the actual node logic
-      const status = yield* _(self.executeTick(context));
-      self._status = status;
+      const status = await this.executeTick(context);
+      this._status = status;
 
       // Emit TICK_END event with status
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_END,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
         data: { status },
       });
 
       return status;
-    }).pipe(
-      // Catch ALL errors (JavaScript throws AND Effect failures) and convert to FAILURE
-      Effect.catchAll((error: unknown) => {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
-        // Store the error message
-        self._lastError = errorMessage;
-        self._status = NodeStatus.FAILURE;
+      // Store the error message
+      this._lastError = errorMessage;
+      this._status = NodeStatus.FAILURE;
 
-        // Emit ERROR event
-        context.eventEmitter?.emit({
-          type: NodeEventType.ERROR,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { error: errorMessage },
-        });
+      // Emit ERROR event
+      context.eventEmitter?.emit({
+        type: NodeEventType.ERROR,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { error: errorMessage },
+      });
 
-        // Emit TICK_END with FAILURE status
-        context.eventEmitter?.emit({
-          type: NodeEventType.TICK_END,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { status: NodeStatus.FAILURE },
-        });
+      // Emit TICK_END with FAILURE status
+      context.eventEmitter?.emit({
+        type: NodeEventType.TICK_END,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { status: NodeStatus.FAILURE },
+      });
 
-        // Use centralized error handler for consistent behavior
-        return handleNodeError(error);
-      }),
-    );
+      // Use centralized error handler for consistent behavior
+      return handleNodeError(error);
+    }
   }
 
   /**
    * Abstract method for subclasses to implement their execution logic
-   * Returns Effect for async operations
-   *
-   * Subclasses can either:
-   * 1. Override executeTick directly for simple synchronous operations
-   * 2. Use the fork/poll pattern by calling runWithDeferredPattern() in executeTick
+   * Returns Promise for async operations
    */
   protected abstract executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never>;
-
-  /**
-   * Helper method: Run async work using Deferred + Fiber pattern
-   * This enables proper async/RUNNING semantics where parents can observe RUNNING status
-   *
-   * Usage in subclass executeTick:
-   * ```
-   * protected executeTick(context: EffectTickContext): Effect.Effect<NodeStatus, never, never> {
-   *   return this.runWithDeferredPattern(context, (ctx) => {
-   *     // Your async work here - returns Effect
-   *     return Effect.promise(() => page.click());
-   *   });
-   * }
-   * ```
-   */
-  protected runWithDeferredPattern(
-    context: EffectTickContext,
-    createWork: (context: EffectTickContext) => Promise<NodeStatus>,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const existingOp = context.runningOps.get(this.id);
-
-    if (existingOp) {
-      // Tick 2+: Check if operation completed (O(1) flag check)
-      if (existingOp.completed) {
-        // Completed - clean up and return result
-        context.runningOps.delete(this.id);
-
-        if (existingOp.error) {
-          this.log(`Async operation failed: ${existingOp.error}`);
-          return Effect.fail(existingOp.error);
-        }
-
-        this.log(`Async operation completed with status: ${existingOp.result}`);
-        if (existingOp.result === undefined) {
-          return Effect.succeed(NodeStatus.RUNNING);
-        }
-        return Effect.succeed(existingOp.result);
-      }
-
-      // Still running
-      this.log(`Async operation still running...`);
-      return Effect.succeed(NodeStatus.RUNNING);
-    } else {
-      // Tick 1: Start work and return RUNNING immediately
-      const op: RunningOperation = {
-        promise: null as unknown as Promise<NodeStatus>, // Will be set immediately
-        completed: false,
-      };
-
-      // Start the Promise and attach completion handlers
-      const promise = createWork(context);
-      op.promise = promise;
-
-      promise.then(
-        (result) => {
-          op.completed = true;
-          op.result = result;
-        },
-        (error) => {
-          op.completed = true;
-          op.error = error as Error;
-        },
-      );
-
-      context.runningOps.set(this.id, op);
-      this.log(`Async operation started, returning RUNNING`);
-      return Effect.succeed(NodeStatus.RUNNING);
-    }
-  }
+    context: TemporalContext,
+  ): Promise<NodeStatus>;
 }
 
 /**
  * Base class for condition nodes
- * Includes resumable execution support and Effect-based async/RUNNING semantics
+ * Includes resumable execution support and async/RUNNING semantics
  */
 export abstract class ConditionNode extends BaseNode {
   /**
@@ -361,109 +253,78 @@ export abstract class ConditionNode extends BaseNode {
 
   /**
    * Tick with resumable execution support for leaf nodes
-   * Uses Effect for proper async/RUNNING semantics
-   * All errors (JavaScript throws and Effect failures) are converted to NodeStatus.FAILURE
+   * Uses async/await for Promise-based async/RUNNING semantics
+   * All errors are caught and converted to NodeStatus.FAILURE
    */
-  tick(context: EffectTickContext): Effect.Effect<NodeStatus, never, never> {
-    const self = this;
-
-    return Effect.gen(function* (_) {
+  async tick(context: TemporalContext): Promise<NodeStatus> {
+    try {
       // Store eventEmitter reference for halt/reset
-      self._eventEmitter = context.eventEmitter;
+      this._eventEmitter = context.eventEmitter;
 
       // Emit TICK_START event
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_START,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
       });
 
-      // Resumable execution: skip leaf nodes before resume point
-      if (context.resumeFromNodeId && !context.hasReachedResumePoint) {
-        if (self.id === context.resumeFromNodeId) {
-          // Reached the resume point - set flag and execute normally
-          context.hasReachedResumePoint = true;
-          self.log(`[Resume] Resuming execution from this node`);
-        } else {
-          // Before resume point - mark as SKIPPED
-          self.log(`[Resume] Skipping node (before resume point)`);
-          self._status = NodeStatus.SKIPPED;
-
-          // Emit TICK_END with SKIPPED status
-          context.eventEmitter?.emit({
-            type: NodeEventType.TICK_END,
-            nodeId: self.id,
-            nodeName: self.name,
-            nodeType: self.type,
-            timestamp: Date.now(),
-            data: { status: NodeStatus.SKIPPED },
-          });
-
-          // Return SKIPPED status - composites will handle this appropriately
-          return NodeStatus.SKIPPED;
-        }
-      }
-
       // Execute the actual node logic
-      const status = yield* _(self.executeTick(context));
-      self._status = status;
+      const status = await this.executeTick(context);
+      this._status = status;
 
       // Emit TICK_END event with status
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_END,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
         data: { status },
       });
 
       return status;
-    }).pipe(
-      // Catch ALL errors (JavaScript throws AND Effect failures) and convert to FAILURE
-      Effect.catchAll((error: unknown) => {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
-        // Store the error message
-        self._lastError = errorMessage;
-        self._status = NodeStatus.FAILURE;
+      // Store the error message
+      this._lastError = errorMessage;
+      this._status = NodeStatus.FAILURE;
 
-        // Emit ERROR event
-        context.eventEmitter?.emit({
-          type: NodeEventType.ERROR,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { error: errorMessage },
-        });
+      // Emit ERROR event
+      context.eventEmitter?.emit({
+        type: NodeEventType.ERROR,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { error: errorMessage },
+      });
 
-        // Emit TICK_END with FAILURE status
-        context.eventEmitter?.emit({
-          type: NodeEventType.TICK_END,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { status: NodeStatus.FAILURE },
-        });
+      // Emit TICK_END with FAILURE status
+      context.eventEmitter?.emit({
+        type: NodeEventType.TICK_END,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { status: NodeStatus.FAILURE },
+      });
 
-        // Use centralized error handler for consistent behavior
-        return handleNodeError(error);
-      }),
-    );
+      // Use centralized error handler for consistent behavior
+      return handleNodeError(error);
+    }
   }
 
   /**
    * Abstract method for subclasses to implement their execution logic
-   * Returns Effect for async operations
+   * Returns Promise for async operations
    */
   protected abstract executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never>;
+    context: TemporalContext,
+  ): Promise<NodeStatus>;
 }
 
 /**
@@ -488,90 +349,74 @@ export abstract class DecoratorNode extends BaseNode {
 
   /**
    * Tick with resumable execution support - decorators can be resume points
-   * Uses Effect for proper async/RUNNING semantics
-   * All errors (JavaScript throws and Effect failures) are converted to NodeStatus.FAILURE
+   * Uses async/await for Promise-based async/RUNNING semantics
+   * All errors are caught and converted to NodeStatus.FAILURE
    */
-  tick(context: EffectTickContext): Effect.Effect<NodeStatus, never, never> {
-    const self = this;
-
-    return Effect.gen(function* (_) {
+  async tick(context: TemporalContext): Promise<NodeStatus> {
+    try {
       // Emit TICK_START event
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_START,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
       });
 
-      // Check if this decorator is the resume point
-      if (context.resumeFromNodeId && !context.hasReachedResumePoint) {
-        if (self.id === context.resumeFromNodeId) {
-          // This decorator is the resume point - set flag and execute normally
-          context.hasReachedResumePoint = true;
-          self.log(`[Resume] Resuming execution from this decorator node`);
-        }
-        // If not the resume point, continue traversing to find it (don't skip decorators)
-      }
-
       // Execute decorator's tick logic
-      // Outer catchAll will handle all errors
-      const status = yield* _(self.executeTick(context));
+      const status = await this.executeTick(context);
 
       // Emit TICK_END event
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_END,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
         data: { status },
       });
 
       return status;
-    }).pipe(
-      // Catch ALL errors (JavaScript throws AND Effect failures) and convert to FAILURE
-      Effect.catchAll((error: unknown) => {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
-        // Store the error message
-        self._lastError = errorMessage;
-        self._status = NodeStatus.FAILURE;
+      // Store the error message
+      this._lastError = errorMessage;
+      this._status = NodeStatus.FAILURE;
 
-        // Emit ERROR event
-        context.eventEmitter?.emit({
-          type: NodeEventType.ERROR,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { error: errorMessage },
-        });
+      // Emit ERROR event
+      context.eventEmitter?.emit({
+        type: NodeEventType.ERROR,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { error: errorMessage },
+      });
 
-        // Emit TICK_END with FAILURE status
-        context.eventEmitter?.emit({
-          type: NodeEventType.TICK_END,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { status: NodeStatus.FAILURE },
-        });
+      // Emit TICK_END with FAILURE status
+      context.eventEmitter?.emit({
+        type: NodeEventType.TICK_END,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { status: NodeStatus.FAILURE },
+      });
 
-        // Use centralized error handler for consistent behavior
-        return handleNodeError(error);
-      }),
-    );
+      // Use centralized error handler for consistent behavior
+      return handleNodeError(error);
+    }
   }
 
   /**
    * Decorator nodes must implement their wrapping logic
-   * Returns Effect for async operations
+   * Returns Promise for async operations
    */
   protected abstract executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never>;
+    context: TemporalContext,
+  ): Promise<NodeStatus>;
 
   setChild(child: TreeNode): void {
     if (!child) {
@@ -619,89 +464,74 @@ export abstract class CompositeNode extends BaseNode {
 
   /**
    * Tick with resumable execution support - composites can be resume points
-   * Uses Effect for proper async/RUNNING semantics
-   * All errors (JavaScript throws and Effect failures) are converted to NodeStatus.FAILURE
+   * Uses async/await for Promise-based async/RUNNING semantics
+   * All errors are caught and converted to NodeStatus.FAILURE
    */
-  tick(context: EffectTickContext): Effect.Effect<NodeStatus, never, never> {
-    const self = this;
-
-    return Effect.gen(function* (_) {
+  async tick(context: TemporalContext): Promise<NodeStatus> {
+    try {
       // Emit TICK_START event
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_START,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
       });
 
-      // Check if this composite is the resume point
-      if (context.resumeFromNodeId && !context.hasReachedResumePoint) {
-        if (self.id === context.resumeFromNodeId) {
-          // This composite is the resume point - set flag and execute normally
-          context.hasReachedResumePoint = true;
-          self.log(`[Resume] Resuming execution from this composite node`);
-        }
-        // If not the resume point, continue traversing to find it (don't skip composites)
-      }
-
       // Execute composite's tick logic
-      const status = yield* _(self.executeTick(context));
+      const status = await this.executeTick(context);
 
       // Emit TICK_END event
       context.eventEmitter?.emit({
         type: NodeEventType.TICK_END,
-        nodeId: self.id,
-        nodeName: self.name,
-        nodeType: self.type,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
         timestamp: Date.now(),
         data: { status },
       });
 
       return status;
-    }).pipe(
-      // Catch ALL errors (JavaScript throws AND Effect failures) and convert to FAILURE
-      Effect.catchAll((error: unknown) => {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
 
-        // Store the error message
-        self._lastError = errorMessage;
-        self._status = NodeStatus.FAILURE;
+      // Store the error message
+      this._lastError = errorMessage;
+      this._status = NodeStatus.FAILURE;
 
-        // Emit ERROR event
-        context.eventEmitter?.emit({
-          type: NodeEventType.ERROR,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { error: errorMessage },
-        });
+      // Emit ERROR event
+      context.eventEmitter?.emit({
+        type: NodeEventType.ERROR,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { error: errorMessage },
+      });
 
-        // Emit TICK_END with FAILURE status
-        context.eventEmitter?.emit({
-          type: NodeEventType.TICK_END,
-          nodeId: self.id,
-          nodeName: self.name,
-          nodeType: self.type,
-          timestamp: Date.now(),
-          data: { status: NodeStatus.FAILURE },
-        });
+      // Emit TICK_END with FAILURE status
+      context.eventEmitter?.emit({
+        type: NodeEventType.TICK_END,
+        nodeId: this.id,
+        nodeName: this.name,
+        nodeType: this.type,
+        timestamp: Date.now(),
+        data: { status: NodeStatus.FAILURE },
+      });
 
-        // Use centralized error handler for consistent behavior
-        return handleNodeError(error);
-      }),
-    );
+      // Use centralized error handler for consistent behavior
+      return handleNodeError(error);
+    }
   }
 
   /**
    * Composite nodes must implement their traversal logic
-   * Returns Effect for async operations
+   * Returns Promise for async operations
    */
   protected abstract executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never>;
+    context: TemporalContext,
+  ): Promise<NodeStatus>;
 
   addChild(child: TreeNode): void {
     if (!child) {

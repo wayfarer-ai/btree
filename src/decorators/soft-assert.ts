@@ -2,10 +2,9 @@
  * SoftAssert decorator - Continue even if child fails
  */
 
-import * as Effect from "effect/Effect";
 import { DecoratorNode } from "../base-node.js";
 import { ConfigurationError } from "../errors.js";
-import { type EffectTickContext, NodeStatus } from "../types.js";
+import { type TemporalContext, NodeStatus } from "../types.js";
 import { checkSignal } from "../utils/signal-check.js";
 
 /**
@@ -19,41 +18,33 @@ export class SoftAssert extends DecoratorNode {
     message: string;
   }> = [];
 
-  executeTick(
-    context: EffectTickContext,
-  ): Effect.Effect<NodeStatus, Error, never> {
-    const self = this;
+  async executeTick(context: TemporalContext): Promise<NodeStatus> {
+    checkSignal(context.signal);
 
-    return Effect.gen(function* (_) {
-      yield* _(checkSignal(context.signal));
+    if (!this.child) {
+      throw new ConfigurationError("SoftAssert requires a child");
+    }
 
-      if (!self.child) {
-        return yield* _(
-          Effect.fail(new ConfigurationError("SoftAssert requires a child")),
-        );
-      }
+    const result = await this.child.tick(context);
 
-      const result = yield* _(self.child.tick(context));
+    if (result === NodeStatus.FAILURE) {
+      // Log failure
+      const failure = {
+        timestamp: Date.now(),
+        message: `Soft assertion failed: ${this.child.name}`,
+      };
+      this.failures.push(failure);
 
-      if (result === NodeStatus.FAILURE) {
-        // Log failure
-        const failure = {
-          timestamp: Date.now(),
-          message: `Soft assertion failed: ${self.child.name}`,
-        };
-        self.failures.push(failure);
+      this.log(`Soft assertion failed (continuing): ${this.child.name}`);
 
-        self.log(`Soft assertion failed (continuing): ${self.child.name}`);
+      // Convert FAILURE to SUCCESS
+      this._status = NodeStatus.SUCCESS;
+      return NodeStatus.SUCCESS;
+    }
 
-        // Convert FAILURE to SUCCESS
-        self._status = NodeStatus.SUCCESS;
-        return NodeStatus.SUCCESS;
-      }
-
-      // Propagate SUCCESS or RUNNING as-is
-      self._status = result;
-      return result;
-    });
+    // Propagate SUCCESS or RUNNING as-is
+    this._status = result;
+    return result;
   }
 
   /**
