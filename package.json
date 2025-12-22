@@ -1,5 +1,5 @@
 {
-  "name": "@wayfarer-ai/btree",
+  "name": "@wayfarer-ai/btree-workflows",
   "version": "0.0.1",
   "type": "module",
   "main": "./dist/index.js",
